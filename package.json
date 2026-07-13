@@ -1,21 +1,22 @@
 {
-	"name": "@orkestrel/database",
-	"version": "0.0.2",
-	"description": "A typed database abstraction for the @orkestrel line — a single core engine over pluggable storage drivers. Part of the @orkestrel line.",
+	"name": "@orkestrel/worker",
+	"version": "0.0.1",
+	"description": "A typed, resource-backed job worker for the @orkestrel line — a Queue paired with a Pool over an execution seam, plus a node:worker_threads server surface for CPU-parallel jobs. Part of the @orkestrel line.",
 	"keywords": [
-		"database",
-		"driver",
-		"query",
-		"server",
-		"storage",
-		"typescript"
+		"async",
+		"concurrency",
+		"job-queue",
+		"pool",
+		"typescript",
+		"worker",
+		"worker-threads"
 	],
-	"homepage": "https://github.com/orkestrel/database#readme",
-	"bugs": "https://github.com/orkestrel/database/issues",
+	"homepage": "https://github.com/orkestrel/worker#readme",
+	"bugs": "https://github.com/orkestrel/worker/issues",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/orkestrel/database.git"
+		"url": "git+https://github.com/orkestrel/worker.git"
 	},
 	"files": [
 		"dist",
@@ -64,7 +65,7 @@
 		"format:check": "oxfmt --config .oxfmtrc.json --check .",
 		"lint:check": "oxlint --config .oxlintrc.json .",
 		"test": "npm run test:src && npm run test:guides",
-		"test:src": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:core --project src:browser --project src:server",
+		"test:src": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:core --project src:server",
 		"test:src:core": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:core",
 		"test:src:server": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:server",
 		"test:guides": "vitest run --config vite.config.ts --reporter=dot --project guides",
@@ -75,13 +76,14 @@
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run check:src && npm run build && npm test"
 	},
 	"dependencies": {
-		"@orkestrel/abort": "^0.0.1",
 		"@orkestrel/contract": "^0.0.1",
+		"@orkestrel/database": "^0.0.2",
 		"@orkestrel/emitter": "^0.0.1",
-		"@orkestrel/indexeddb": "^0.0.2",
-		"@orkestrel/sqlite": "^0.0.2"
+		"@orkestrel/pool": "^0.0.1",
+		"@orkestrel/queue": "^0.0.1"
 	},
 	"devDependencies": {
+		"@microsoft/api-extractor": "^7.58.9",
 		"@orkestrel/guide": "^0.0.1",
 		"@types/node": "^26.1.1",
 		"oxfmt": "^0.58.0",

@@ -1,4 +1,4 @@
-import type { QueueStoreInterface } from '@src/core'
+import type { QueueStoreInterface } from '@orkestrel/queue'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
 
 /**

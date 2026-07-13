@@ -1,12 +1,13 @@
-import type { EmitterInterface } from '../emitters/types.js'
-import type { QueueEntryOptions, WorkerEventMap, WorkerInterface, WorkerOptions } from './types.js'
-import { Emitter } from '../emitters/Emitter.js'
-import { Pool } from './Pool.js'
-import { Queue } from './Queue.js'
+import type { EmitterInterface } from '@orkestrel/emitter'
+import type { QueueEntryOptions } from '@orkestrel/queue'
+import type { WorkerEventMap, WorkerInterface, WorkerOptions } from './types.js'
+import { Emitter } from '@orkestrel/emitter'
+import { Pool } from '@orkestrel/pool'
+import { Queue } from '@orkestrel/queue'
 
 /**
- * A resource-backed job worker — a thin facade composing a {@link Queue} with a
- * {@link Pool}.
+ * A resource-backed job worker — a thin facade composing a `Queue` (`@orkestrel/queue`)
+ * with a `Pool` (`@orkestrel/pool`).
  *
  * @remarks
  * - **Composition, not reimplementation.** The Worker owns a `Pool` (built from

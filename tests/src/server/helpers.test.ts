@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { createNodeWorker, dispatch, isReply, spawnThread } from '@src/server'
-import { waitForDelay } from '../../../setup.js'
-import { createTeardown } from '../../../setupServer.js'
+import { waitForDelay } from '../../setup.js'
+import { createTeardown } from '../../setupServer.js'
 
-// src/server/workers/helpers.ts — the main-side worker-thread machinery (`spawnThread` /
+// src/server/helpers.ts — the main-side worker-thread machinery (`spawnThread` /
 // `dispatch` / `isReply`) `createNodeWorker` composes over. The round-trip suites below
 // drive `createNodeWorker` over REAL worker threads (no mocking; the node `src:server`
 // project), exercising `spawnThread` + `dispatch` (and `dispatch`'s internal `isReply`

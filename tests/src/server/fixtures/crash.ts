@@ -1,5 +1,5 @@
 // @ts-nocheck — a real worker-thread script (see double.ts).
-import { serveWorker } from '../../../../../src/server/workers/serve.ts'
+import { serveWorker } from '../../../../src/server/serve.ts'
 
 // CRASHES the thread mid-flight (not a handler throw): a NEGATIVE input calls
 // `process.exit(1)`, killing the thread WITHOUT a reply — so the parent's `ThreadWorker`

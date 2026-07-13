@@ -1,5 +1,5 @@
 // @ts-nocheck — a real worker-thread script (see double.ts).
-import { serveWorker } from '../../../../../src/server/workers/serve.ts'
+import { serveWorker } from '../../../../src/server/serve.ts'
 
 // A busy CPU loop that does NOT honour its abort signal — it spins for `value`
 // milliseconds of wall-clock work. Proves the timeout/abort path TERMINATES the thread

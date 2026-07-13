@@ -1,6 +1,6 @@
 // @ts-nocheck — a real worker-thread script (see double.ts).
 import { threadId } from 'node:worker_threads'
-import { serveWorker } from '../../../../../src/server/workers/serve.ts'
+import { serveWorker } from '../../../../src/server/serve.ts'
 
 // Echoes the thread's OWN `threadId` (read straight from `node:worker_threads`, since the
 // handler runs inside the thread). A test counts the distinct ids across many jobs to prove

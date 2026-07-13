@@ -4,7 +4,7 @@
 // the correct reply for the job. The stray posts run inside the handler so they precede the
 // real reply on the same message channel.
 import { parentPort } from 'node:worker_threads'
-import { serveWorker } from '../../../../../src/server/workers/serve.ts'
+import { serveWorker } from '../../../../src/server/serve.ts'
 
 serveWorker({
 	input: (value) => typeof value === 'number',

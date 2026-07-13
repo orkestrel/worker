@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { integerShape, objectShape, stringShape } from '@src/core'
+import { integerShape, objectShape, stringShape } from '@orkestrel/contract'
 import { createJSONQueueStore, createNodeWorker } from '@src/server'
-import { createTeardown, tempDatabasePath } from '../../../setupServer.js'
+import { createTeardown, tempDatabasePath } from '../../setupServer.js'
 
-// src/server/workers/factories.ts — createJSONQueueStore over a real JSON file (node
+// src/server/factories.ts — createJSONQueueStore over a real JSON file (node
 // env, no mocks). Durability is the JSONDriver's job and the store engine is shared, so
 // the proof is cross-INSTANCE: entries one store persists to a path are loaded by a
 // SECOND store built over the SAME path — exactly how a queue resumes after a restart.

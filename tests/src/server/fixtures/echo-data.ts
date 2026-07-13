@@ -1,6 +1,6 @@
 // @ts-nocheck — a real worker-thread script (see double.ts).
 import { workerData } from 'node:worker_threads'
-import { serveWorker } from '../../../../../src/server/workers/serve.ts'
+import { serveWorker } from '../../../../src/server/serve.ts'
 
 // Ignores the per-job input and replies with the `workerData` cloned to the thread once at
 // spawn (read directly from `node:worker_threads` — the worker is already in a thread). Proves

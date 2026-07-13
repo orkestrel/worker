@@ -1,7 +1,7 @@
-import type { QueueExecution } from '@src/core'
+import type { QueueExecution } from '@orkestrel/queue'
 import type { Guard, NodeThread, Reply } from './types.js'
 import { Worker as ThreadWorker } from 'node:worker_threads'
-import { isRecord } from '@src/core'
+import { isRecord } from '@orkestrel/contract'
 
 // === The wire protocol (main ↔ thread)
 //

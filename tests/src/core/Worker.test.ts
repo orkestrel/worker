@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { createMemoryQueueStore, stringShape, Worker } from '@src/core'
+import { stringShape } from '@orkestrel/contract'
+import { createMemoryQueueStore } from '@orkestrel/queue'
+import { Worker } from '@src/core'
 import {
 	createErrorRecorder,
 	createGate,
@@ -7,7 +9,7 @@ import {
 	createResourceFactory,
 	recordEmitterEvents,
 	waitForDelay,
-} from '../../../setup.js'
+} from '../../setup.js'
 
 // src/core/workers/Worker.ts — the Queue⨉Pool facade. Real behaviour, no mocks: a
 // counting `create` hook proves resources are reused and never exceed the pool max,

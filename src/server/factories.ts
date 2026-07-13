@@ -1,7 +1,10 @@
-import type { ContractShape, Infer, QueueStoreInterface, WorkerInterface } from '@src/core'
+import type { WorkerInterface } from '@src/core'
+import type { ContractShape, Infer } from '@orkestrel/contract'
+import type { QueueStoreInterface } from '@orkestrel/queue'
 import type { NodeThread, NodeWorkerOptions } from './types.js'
-import { createDatabaseQueueStore, createWorker } from '@src/core'
-import { createJSONDriver } from '../databases/index.js'
+import { createWorker } from '@src/core'
+import { createJSONDriver } from '@orkestrel/database/server'
+import { createDatabaseQueueStore } from '@orkestrel/queue'
 import { dispatch, spawnThread } from './helpers.js'
 
 /**
