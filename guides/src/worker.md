@@ -29,7 +29,7 @@ Create a worker over a resource lifecycle and a handler, then `enqueue` inputs a
 their results:
 
 ```ts
-import { createWorker } from '@src/core'
+import { createWorker } from '@orkestrel/worker'
 
 const worker = createWorker<Query, Connection, Rows>({
 	pool: { create: () => connect(), destroy: (connection) => connection.close() },
@@ -59,7 +59,7 @@ for completeness and direct use; the factory is the intended entry point. Drivin
 thread by hand:
 
 ```ts
-import { dispatch, isReply, spawnThread } from '@src/server'
+import { dispatch, isReply, spawnThread } from '@orkestrel/worker/server'
 
 const isNumber = (value: unknown): value is number => typeof value === 'number'
 
@@ -206,7 +206,7 @@ fail-fasts a bad one before it crosses to a thread), and `result` narrows each r
 value. Both generics infer from these, so call sites pass no type arguments:
 
 ```ts
-import { createNodeWorker } from '@src/server'
+import { createNodeWorker } from '@orkestrel/worker/server'
 
 const isNumber = (value: unknown): value is number => typeof value === 'number'
 
@@ -228,7 +228,7 @@ fires on a cooperative abort); its resolved value is the reply:
 
 ```ts
 // double.ts — the worker script
-import { serveWorker } from '@src/server'
+import { serveWorker } from '@orkestrel/worker/server'
 
 serveWorker<number, number>({
 	input: (value): value is number => typeof value === 'number',
@@ -253,7 +253,7 @@ outstanding work:
 
 ```ts
 import { stringShape } from '@orkestrel/contract'
-import { createJSONQueueStore } from '@src/server'
+import { createJSONQueueStore } from '@orkestrel/worker/server'
 
 const store = createJSONQueueStore('data/worker.json', stringShape())
 await store.save({ id: 'job-1', input: 'https://example.com', attempts: 0 })
@@ -275,7 +275,7 @@ re-exposes from its underlying queue — logging, metrics, tracing. Subscribe vi
 supply an `error?` handler to receive a listener's throw.
 
 ```ts
-import { createWorker } from '@src/core'
+import { createWorker } from '@orkestrel/worker'
 
 const worker = createWorker({
 	pool: { create: () => connect() },
@@ -301,7 +301,7 @@ never corrupt the inner queue or pool).
 ### A resource-backed worker
 
 ```ts
-import { createWorker } from '@src/core'
+import { createWorker } from '@orkestrel/worker'
 
 // A Queue whose handler runs each job against a pooled resource (acquired before the
 // handler, released after it — even on throw). The pool's `max` defaults to `concurrency`.
@@ -319,7 +319,7 @@ worker.destroy() // tears down the queue, then the pool
 ### CPU-parallel jobs over threads
 
 ```ts
-import { createNodeWorker } from '@src/server'
+import { createNodeWorker } from '@orkestrel/worker/server'
 
 const isNumber = (value: unknown): value is number => typeof value === 'number'
 
@@ -338,8 +338,8 @@ worker.destroy()
 
 ```ts
 import { stringShape } from '@orkestrel/contract'
-import { createWorker } from '@src/core'
-import { createJSONQueueStore } from '@src/server'
+import { createWorker } from '@orkestrel/worker'
+import { createJSONQueueStore } from '@orkestrel/worker/server'
 
 const store = createJSONQueueStore('data/worker.json', stringShape())
 const worker = createWorker({ store, pool: { create: () => connect() }, handler: run })
