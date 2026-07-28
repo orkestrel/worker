@@ -69,6 +69,64 @@ export function workspacePath(path: string): string | undefined {
 	return relativePath
 }
 
+export function isBoundaryExemptModule(id: string): boolean {
+	const normalizedId = id.replaceAll('\\', '/')
+	const [path] = normalizedId.split(/[?#]/)
+	if (
+		path === undefined ||
+		normalizedId.startsWith('\0') ||
+		normalizedId.includes('virtual:') ||
+		normalizedId === '@vite/client' ||
+		normalizedId === '@vite/env' ||
+		normalizedId.startsWith('/@id/') ||
+		normalizedId.startsWith('/@vite/') ||
+		normalizedId.startsWith('/__vite') ||
+		normalizedId.startsWith('/__vitest') ||
+		normalizedId.startsWith('@vitest/browser') ||
+		normalizedId.includes('/@vitest/browser/')
+	) {
+		return true
+	}
+	let physicalId: string | undefined
+	try {
+		physicalId = physicalPath(id).replaceAll('\\', '/')
+	} catch {
+		physicalId = undefined
+	}
+	for (const candidate of physicalId === undefined ? [path] : [path, physicalId]) {
+		if (candidate.split('/').some((segment) => segment.toLowerCase() === 'node_modules')) {
+			return true
+		}
+	}
+	return false
+}
+
+export function isWorkspaceBoundaryModule(id: string): boolean {
+	if (isBoundaryExemptModule(id)) return false
+	const normalizedId = id.replaceAll('\\', '/')
+	const [path] = normalizedId.split(/[?#]/)
+	if (path === undefined) return false
+	let candidate = path.startsWith('/@fs/') ? path.slice('/@fs/'.length) : path
+	try {
+		if (/^file:/i.test(candidate)) candidate = fileURLToPath(candidate)
+	} catch {
+		return false
+	}
+	const rootRelative = /^\/(?:app|src)\/(?:core|browser|server)\//.test(candidate)
+	const absoluteCandidate = rootRelative
+		? resolvePath(WORKSPACE_ROOT, candidate.slice(1))
+		: isAbsolute(candidate)
+			? candidate
+			: resolvePath(WORKSPACE_ROOT, candidate)
+	const relativeId = relative(WORKSPACE_ROOT, absoluteCandidate).replaceAll('\\', '/')
+	return (
+		relativeId !== '..' &&
+		!relativeId.startsWith('../') &&
+		!isAbsolute(relativeId) &&
+		/^(?:app|src)\/(?:core|browser|server)\//.test(relativeId)
+	)
+}
+
 export function isOutsideWorkspacePath(path: string): boolean {
 	const [pathWithoutQuery] = path.split('?')
 	if (pathWithoutQuery === undefined) return false
@@ -386,6 +444,7 @@ export async function environmentAssetSources(
 	const transformed = await transformWithOxc(code, path)
 	const visitor = new Visitor({
 		ImportExpression(node) {
+			if (emitted) return
 			let value: string | undefined
 			if (node.source.type === 'Literal' && typeof node.source.value === 'string') {
 				value = node.source.value
@@ -471,8 +530,8 @@ export function environmentBoundary(
 			environmentRoot = physicalPath(config.root)
 		},
 		async resolveId(source, importer) {
-			if (importer === undefined) return null
-			if (source.startsWith('\0')) return null
+			if (importer === undefined || !isWorkspaceBoundaryModule(importer)) return null
+			if (isBoundaryExemptModule(source)) return null
 			const normalizedSource = source.replaceAll('\\', '/')
 			const sourceError = environmentSourceError(owner, normalizedSource)
 			if (sourceError !== undefined) this.error(sourceError)
@@ -549,6 +608,7 @@ export function environmentBoundary(
 			return null
 		},
 		async load(id) {
+			if (!isWorkspaceBoundaryModule(id)) return null
 			const physicalImporter = physicalPath(id)
 			const trustedPackageRoot = trustedPackageRootFor(physicalImporter, trustedPackageRoots)
 			const inferredPackageRoot =
@@ -606,6 +666,7 @@ export function environmentBoundary(
 					const physical = physicalPath(
 						isAbsolute(original) ? original : resolvePath(environmentRoot, original),
 					)
+					if (isBoundaryExemptModule(original) || isBoundaryExemptModule(physical)) continue
 					const target = workspacePath(physical)
 					if (target === undefined) {
 						if (trustedPackageRootFor(physical, trustedPackageRoots) === undefined) {
@@ -621,6 +682,7 @@ export function environmentBoundary(
 		buildEnd(error) {
 			if (error !== undefined) return
 			for (const id of this.getModuleIds()) {
+				if (!isWorkspaceBoundaryModule(id)) continue
 				const target = workspacePath(id)
 				if (target === undefined) {
 					if (
@@ -638,6 +700,7 @@ export function environmentBoundary(
 		transform: {
 			order: 'pre',
 			async handler(code, id) {
+				if (!isWorkspaceBoundaryModule(id)) return null
 				const target = workspacePath(id)
 				const physicalImporter = physicalPath(id)
 				const importerPackageRoot = trustedPackageRootFor(physicalImporter, trustedPackageRoots)

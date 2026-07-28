@@ -55,8 +55,8 @@ export type Reply =
  */
 export interface NodeThread {
 	readonly worker: ThreadWorker
-	alive: boolean
-	death: Error | undefined
+	readonly alive: boolean
+	readonly death: Error | undefined
 }
 
 /**

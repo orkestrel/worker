@@ -1,11 +1,10 @@
 import type { WorkerInterface } from '@src/core'
 import type { ContractShape, Infer } from '@orkestrel/contract'
 import type { QueueStoreInterface } from '@orkestrel/queue'
-import type { NodeThread, NodeWorkerOptions } from './types.js'
-import { createWorker } from '@src/core'
+import type { NodeWorkerOptions } from './types.js'
 import { createJSONDriver } from '@orkestrel/database/server'
 import { createDatabaseQueueStore } from '@orkestrel/queue'
-import { dispatch, spawnThread } from './helpers.js'
+import { NodeWorker } from './NodeWorker.js'
 
 /**
  * Create a persistent JSON-file {@link QueueStoreInterface} — the core
@@ -88,22 +87,5 @@ export function createJSONQueueStore<TInput extends ContractShape>(
 export function createNodeWorker<TInput, TResult>(
 	options: NodeWorkerOptions<TInput, TResult>,
 ): WorkerInterface<TInput, TResult> {
-	return createWorker<TInput, NodeThread, TResult>({
-		pool: {
-			create: () => spawnThread(options.script, options.workerData),
-			destroy: (thread) => thread.worker.terminate().then(() => {}),
-			validate: (thread) => thread.alive && thread.worker.threadId > 0,
-			max: options.concurrency,
-		},
-		handler: (input, thread, execution) => {
-			if (!options.input(input)) {
-				return Promise.reject(new Error('input did not satisfy input guard'))
-			}
-			return dispatch(thread, input, execution, options.result)
-		},
-		concurrency: options.concurrency,
-		retries: options.retries,
-		timeout: options.timeout,
-		store: options.store,
-	})
+	return new NodeWorker(options).build()
 }

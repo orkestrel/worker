@@ -29,7 +29,7 @@ that projection, expressed as data. Rendered defaults ship as versioned package 
 here rather than a hand edit in every workspace.
 
 The module is mechanism, never product policy. The judgment calls — the name, the description, the
-keywords, which src and app environments, which dependencies, any template override —
+keywords, which src and app environments, which dependencies, any artifact override —
 belong to the caller. What this module supplies is the closed vocabularies, the variant matrix as
 data, exact-record validation, a fail-closed gate, a deterministic pin, and lossless projections.
 
@@ -546,7 +546,8 @@ entity allocation.
 then checks every override against the exact artifact set the plan would write. An override whose
 `path` matches no planned artifact, targets a `host`-origin artifact, or targets the
 blueprint-owned `package.json` publication boundary is a blocking question rather than a silent
-no-op.
+no-op. An override that clears all three lands a `warnings` entry naming the path it replaces — the
+declaration is accepted, and it is never accepted silently.
 
 ### Validators — server
 
@@ -914,7 +915,9 @@ dependency-less stand-in. Environments come from `src/<environment>/` and `app/<
 scoped entries, with an optional peer recovered from `peerDependenciesMeta`; and `extras` is every
 development dependency minus the generated baseline and minus anything already declared as a
 dependency or peer, so a hand-added development dependency round-trips and stays audit-clean.
-`overrides` is always empty, because derivation cannot know a caller's override intent.
+Derivation yields no `overrides`: they are caller-time inputs, not repository state. A computed
+artifact that must differ reveals a gap in the canon; the blueprint grows an axis for that
+distinction rather than the repository forking the file.
 
 `storagePath`, `stageHost`, `readHostManifest`, `locateHostSource`, `remapArtifactPath`, and
 `hydratePlan` are the vendored-host path. `storagePath` maps a repo-relative path to its un-dotted
@@ -936,7 +939,9 @@ anything.
 `consumeCatalogAllowance` decrements the single shared entry allowance and throws `TARGET` before an
 over-budget traversal continues. `discoverPackages` requires a real, unlinked root and lists its
 immediate child directories whose bounded manifest names a scoped package, skipping anything else
-silently. `catalogPackages` applies one allowance across every root and directory rather than
+silently. A control-bearing child directory fails closed before its manifest is read and the
+untrusted name is never reflected in the diagnostic. `catalogPackages` applies one allowance across
+every root and directory rather than
 resetting a per-root budget, then draws each description from the first paragraph of the first
 blockquote of that package's own bounded guide via `guideToDescription`; a missing guide, an
 unreadable or oversized one, or one with no blockquote yields an empty description rather than an
@@ -1004,7 +1009,13 @@ optional metadata, and engines.
 
 `rootTsconfig` emits the root compiler options and one path alias per declared environment;
 `coreTsconfig`, `srcTsconfig`, and `appTsconfig` emit the scoped configurations that remove the
-wrong host's globals from each environment. `viteHeader` renders the shared header — the alias block
+wrong host's globals from each environment. A core scope is the interesting one: `lib` is
+`["ESNext", "WebWorker"]` and `types` stays `[]`, which declares the WHATWG surface that is
+identical across Node, browsers, and workers — `fetch` and its request/response/header types,
+streams, `URL`, `AbortController`, the text encoders, `crypto`, timers, `console`, `DOMException`,
+`structuredClone` — while leaving `document`, `window`, and every `node:*` type unresolvable. That
+is one declaration set for a host-independent module, not a host. `viteHeader` renders the shared
+header — the alias block
 derived from the tsconfig paths, plus the environment-boundary plugin — and `viteMachinery` is the
 one place the header's axes are derived, read by `rootViteConfig`, `singleSrcViteConfig`,
 `applicationViteConfig`, and `configArtifacts` alike so no caller can invent a fourth answer.
@@ -1016,7 +1027,8 @@ emits `environmentBoundary`, its `resolveId` / `load` / `buildEnd` walks, the mo
 plus its `environmentPathError` / `environmentSourceError` clauses). Those enforce owner-independent
 laws: core stays host-independent whatever else the workspace declares, a server module never
 imports a stylesheet, and a `@vite-ignore` dynamic import — which `resolveId` never sees and the
-module graph never records — has no other enforcement point. Only host-specific pipelines vary,
+module graph never records — has no other enforcement point in workspace-owned source. Dependency
+and toolchain modules are outside that ownership boundary. Only host-specific pipelines vary,
 along the three `ViteMachinery` axes:
 
 | Machinery                                                         | Emitted when                         |
@@ -1135,8 +1147,9 @@ The public methods of each behavioral interface, one table per type.
 `Scaffolding`; the optional group selection scopes the plan to those artifact groups.
 `audit(blueprint, current, groups?)` compiles and then diffs the resulting plan against the
 caller-supplied current content; a gated blueprint returns `complete: false` with the gate's
-blocking questions and zero findings. `destroy()` is idempotent teardown. The interface also
-exposes the readonly `emitter`.
+blocking questions and zero findings, and a complete one carries the gate's advisories on that same
+`questions` field. `destroy()` is idempotent teardown. The interface also exposes the readonly
+`emitter`.
 
 #### `PlanManagerInterface`
 
@@ -1205,8 +1218,9 @@ its output, whether it failed, and any error text.
    overrides, and pins the draft. A throw here records a `draft` failure coded
    `INVALID`, emits `error`, marks the remaining two stages skipped, and returns incomplete.
 2. **gate** — `validatePlan` runs the semantic pass over the blueprint and checks every override
-   against the drafted artifact set. Blocking questions fail the stage; a dependency outside the
-   vendored guide set contributes a non-blocking advisory question instead.
+   against the drafted artifact set. Blocking questions fail the stage; an accepted override and a
+   dependency outside the vendored guide set each contribute a non-blocking advisory question
+   instead.
 3. **pin** — a host-origin pointer artifact is appended for each non-vendored dependency, and
    `pinPlan` fills `trace` and `hash` from the plan's own content.
 
@@ -1268,11 +1282,16 @@ anything, so a mature workspace's hand-written source, tests, guides, and manife
 overwritten with a stub. A consequence worth stating plainly: the generated
 `.github/workflows/ci.yml` is a **computed** artifact, so **user-owned CI is never repaired**. Once
 a workspace has its own workflow, that copy stands, and any change to it is an ordinary edit in that
-workspace.
+workspace. Audit still compares it because computed artifacts are content-aware canon. A legitimate
+difference that the blueprint cannot express is a canon gap: add the missing blueprint axis rather
+than forking the computed file in one repository.
 
 Overrides respect the same boundary from the other direction. `applyOverrides` never replaces a
 host-origin artifact and never replaces `package.json`; the gate turns either attempt — and an
 override matching no planned artifact at all — into a blocking question rather than a silent no-op.
+What survives those three refusals is applied and announced: the gate carries a non-blocking
+advisory naming each replaced path, and that advisory rides the `Scaffolding` and the `Audit` all
+the way through the library result.
 
 Guide mirrors are the one place ownership is conditional, and the law is one owner per guide path.
 **A workspace mirrors every line guide except its own.** When the name matches — the guide package
@@ -1387,10 +1406,20 @@ a fixed, interleaved order so aggregates sit immediately before their per-enviro
   live generated-consumer integration gate for the scaffold engine itself
 
 **Environment isolation.** Scoped TypeScript projects remove the wrong host's globals from each
-environment: core scopes carry no DOM, no Node, and no host globals at all; browser scopes carry DOM
-and no Node; server scopes carry Node and no DOM. Lint restricts declared package, alias, and
-conventional relative imports in the same directions. Neither replaces the other, and neither
-replaces the build.
+environment: core scopes carry the WHATWG web-interop surface and no host at all — no DOM, no Node,
+no `vite/client`; browser scopes carry DOM and no Node; server scopes carry Node and no DOM. The
+worker-only globals the `WebWorker` declarations would otherwise admit — `name`, `onrtctransform`,
+`close`, `postMessage`, `dispatchEvent`, `location`, `onerror`, `onlanguagechange`, `onoffline`,
+`ononline`, `onrejectionhandled`, `onunhandledrejection`, `self`, `importScripts`, `fonts`, `caches`,
+`crossOriginIsolated`, `indexedDB`, `isSecureContext`, `origin`, `scheduler`, `createImageBitmap`,
+`reportError`, `cancelAnimationFrame`, `requestAnimationFrame`, `onmessage`, `onmessageerror`,
+`addEventListener`, and `removeEventListener` — are fenced out of `src/core` and `app/core` sources
+by the policy suite, so the declarations widen what a host-independent module may call without
+widening where it may run. On every TypeScript bump, derive this list from the module-scope
+global-object `declare var` and `declare function` declarations in the installed
+`lib.webworker.d.ts`, then subtract values supplied by `lib.esnext*` or current Node globals. Lint
+restricts declared package, alias, and conventional relative imports in the same directions.
+Neither replaces the other, and neither replaces the build.
 
 **The generated build boundary.** The emitted configuration carries an environment-boundary plugin
 that resolves the real module graph rather than re-implementing a parser. **TypeScript and
@@ -1423,10 +1452,10 @@ application's module graph through `import.meta.env` instead.
 Asset URLs that force `?inline` are rejected before Vite can read them outside that auditable output
 graph. Dynamic imports must use a static quoted string or expression-free template string; even
 `/* @vite-ignore */` static values repeat the same environment and containment checks inside the
-transform boundary, including inline HTML proxy modules and trusted dependency modules. Trusted
-dependency modules also pass through a bounded, no-follow, identity-checked load inspection before
-Vite transforms or tree-shakes their raw source, so dependency-side asset references cannot escape
-the physical package root by disappearing from the later graph.
+transform boundary, including inline HTML proxy modules. The transform, load, resolution, emitted
+asset, and finished-module-graph passes apply that law only to workspace-owned `src/*` and `app/*`
+modules. Resolved ids under any `node_modules` segment, Vite/Vitest virtual ids, and tooling client
+injections remain owned by their toolchain and are exempt.
 
 Browser application scripts are modules. Vite's parsed HTML asset callback rejects a classic
 external `<script src>` before resolution and directs the author to `type="module"`. A module
@@ -1441,9 +1470,9 @@ path remains Vite-owned and passes through the environment resolver, which rejec
 ASCII control range and every non-Node URL scheme before loading or output. No second HTML parser or global
 reference rewrite is involved, so comments, text, non-script attributes, and entity-spelled asset
 filenames retain Vite's native parsing and resolution behavior.
-The resolver leaves NUL-prefixed Rolldown/Vite virtual module IDs to the tool that owns that
-namespace; author module and asset URLs are extracted and validated before they reach that resolver
-exception.
+The resolver leaves NUL-prefixed and `virtual:` Rolldown/Vite module IDs, tooling client injections,
+and every resolved `node_modules` module to the tool that owns that namespace; author module and
+asset URLs are extracted and validated before they reach those resolver exceptions.
 SVG script `href` and `xlink:href` attributes are parsed too and rejected as classic script loads.
 Inline module scripts enter Vite's HTML proxy graph and receive the same Oxc boundary analysis as
 module files. Classic inline scripts cannot enter that graph, so the required security prologue places
@@ -1483,11 +1512,7 @@ What it rejects is equally deliberate:
   browser or server package subpath;
 - a browser module reaching a Node builtin or a server subpath;
 - a server module reaching a stylesheet, Vue, or a browser subpath;
-- a workspace-relative import that resolves outside the workspace, or a dependency import that
-  escapes the exact physical package root established by the nearest bounded, unlinked
-  `package.json` whose own `name` exactly matches the resolved dependency;
-- a package `#imports` mapping that resolves outside both the declaring package and another exact
-  physical package root;
+- a workspace-relative import that resolves outside the workspace;
 - an HTML reference carrying `vite-ignore` that violates the same environment or containment law
   as an ordinary reference, a Vite `%ENV%` HTML substitution, a classic external script, or a
   computed dynamic import in the module graph that would bypass graph resolution;
@@ -1510,7 +1535,8 @@ cannot express — that a centralized module exports every top-level declaration
 implementation files hold one class and no stray module-scope declaration, that no function is
 declared inside another function outside a directly-passed callback, that interface properties are
 readonly, that privacy is a runtime `#` field rather than a TypeScript modifier, that a barrel
-re-exports only through `export *`, and that a computed dynamic import cannot smuggle a
+re-exports only through `export *`, that a core source never names a worker-only global the
+`WebWorker` declarations expose, and that a computed dynamic import cannot smuggle a
 cross-environment dependency past the declared import rules. Vue components are inspected for the
 same evasions. It is a complement to lint and typecheck, never a second type system, and it is not a
 general-purpose source analyzer. Generated workspaces receive the same exported policy module as a
@@ -1520,7 +1546,11 @@ host-origin file and run it as a dedicated Node-only `policy` test project over
 **Real browser capability.** Browser test projects are gated on the real executable: the generated
 configuration and the generated policy test both probe `existsSync(chromium.executablePath())`. A
 browser suite runs when a real Chromium is installed and is skipped honestly when it is not, rather
-than being faked.
+than being faked. The gate is applied at registration, not only inside the project: without a
+Chromium the browser project is left out of the emitted `projects` list entirely, so the runner
+never has to reconcile a registered project whose include set resolves to nothing, and one printed
+warning names every omitted project label. A machine with a browser runs the browser suite; a
+machine without one runs the remaining projects and says so.
 
 **Continuous integration.** The generated workflow runs on push and pull request, on
 `ubuntu-latest`, with read-only contents permission, a 60-minute timeout, and a matrix that **tests

@@ -42,12 +42,18 @@ describe('Worker — runs the handler with a pooled resource', () => {
 describe('Worker — resource reuse + the pool cap', () => {
 	it('reuses resources across jobs and never creates more than the pool max', async () => {
 		const { create, created } = createResourceFactory()
-		const gates = [createGate(), createGate(), createGate(), createGate()]
+		const first = createGate()
+		const second = createGate()
+		const third = createGate()
+		const fourth = createGate()
+		const gates = [first, second, third, fourth]
 		const worker = new Worker<number, number, void>({
 			concurrency: 2,
 			pool: { create },
 			handler: async (input) => {
-				await gates[input].promise
+				const gate = gates[input]
+				if (gate === undefined) throw new Error('missing gate')
+				await gate.promise
 			},
 		})
 
@@ -58,13 +64,13 @@ describe('Worker — resource reuse + the pool cap', () => {
 		expect(worker.active).toBe(2)
 
 		// Finish the first two; the next two reuse the freed resources — still only two.
-		gates[0].resolve()
-		gates[1].resolve()
+		first.resolve()
+		second.resolve()
 		await waitForDelay(10)
 		expect(created.count).toBe(2)
 
-		gates[2].resolve()
-		gates[3].resolve()
+		third.resolve()
+		fourth.resolve()
 		await Promise.all(all)
 		expect(created.count).toBe(2)
 		expect(worker.active).toBe(0)
@@ -379,7 +385,11 @@ describe('Worker — failing jobs release resources (no pool starvation)', () =>
 describe('Worker — pool max vs queue concurrency mismatch', () => {
 	it('caps real parallelism at the smaller pool max (resource is the bottleneck)', async () => {
 		const { create, created } = createResourceFactory()
-		const gates = [createGate(), createGate(), createGate(), createGate()]
+		const first = createGate()
+		const second = createGate()
+		const third = createGate()
+		const fourth = createGate()
+		const gates = [first, second, third, fourth]
 		let liveHandlers = 0
 		let peakHandlers = 0
 		// concurrency 4 but only 2 resources — at most 2 handlers can truly run at once
@@ -390,7 +400,9 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 			handler: async (input) => {
 				liveHandlers += 1
 				peakHandlers = Math.max(peakHandlers, liveHandlers)
-				await gates[input].promise
+				const gate = gates[input]
+				if (gate === undefined) throw new Error('missing gate')
+				await gate.promise
 				liveHandlers -= 1
 			},
 		})
@@ -403,13 +415,13 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 		expect(peakHandlers).toBe(2)
 
 		// Releasing the first two lets the parked two acquire the freed resources.
-		gates[0].resolve()
-		gates[1].resolve()
+		first.resolve()
+		second.resolve()
 		await waitForDelay(20)
 		expect(created.count).toBe(2) // still only two resources — reused, never a third
 
-		gates[2].resolve()
-		gates[3].resolve()
+		third.resolve()
+		fourth.resolve()
 		await Promise.all(all)
 		// Throughout, no more than the pool max ran concurrently.
 		expect(peakHandlers).toBe(2)
@@ -419,14 +431,18 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 
 	it('uses at most `concurrency` resources when pool max exceeds concurrency', async () => {
 		const { create, created } = createResourceFactory()
-		const gates = [createGate(), createGate()]
+		const first = createGate()
+		const second = createGate()
+		const gates = [first, second]
 		// concurrency 2 but pool max 10 — the queue caps parallelism at 2, so only two
 		// resources are ever created; the extra pool capacity goes unused.
 		const worker = new Worker<number, number, void>({
 			concurrency: 2,
 			pool: { create, max: 10 },
 			handler: async (input) => {
-				await gates[input].promise
+				const gate = gates[input]
+				if (gate === undefined) throw new Error('missing gate')
+				await gate.promise
 			},
 		})
 
@@ -436,8 +452,8 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 		expect(created.count).toBe(2)
 		expect(worker.active).toBe(2)
 
-		gates[0].resolve()
-		gates[1].resolve()
+		first.resolve()
+		second.resolve()
 		await Promise.all(all)
 		expect(created.count).toBe(2)
 		expect(worker.active).toBe(0)

@@ -40,6 +40,7 @@ export const FUNCTION_SOURCE_FILES: readonly string[] = Object.freeze([
 	'relations.ts',
 	'schemas.ts',
 	'seeders.ts',
+	'serve.ts',
 	'shapers.ts',
 	'validators.ts',
 ])
@@ -54,6 +55,42 @@ export const DATA_SOURCE_FILES: readonly string[] = Object.freeze([
 	'templates.ts',
 	'validators.ts',
 ])
+
+/** Worker-only value globals that WebWorker typing must not expose to core implementations. */
+export const WORKER_SCOPE_VALUE_GLOBALS: readonly string[] = Object.freeze([
+	'name',
+	'onrtctransform',
+	'close',
+	'postMessage',
+	'dispatchEvent',
+	'location',
+	'onerror',
+	'onlanguagechange',
+	'onoffline',
+	'ononline',
+	'onrejectionhandled',
+	'onunhandledrejection',
+	'self',
+	'importScripts',
+	'fonts',
+	'caches',
+	'crossOriginIsolated',
+	'indexedDB',
+	'isSecureContext',
+	'origin',
+	'scheduler',
+	'createImageBitmap',
+	'reportError',
+	'cancelAnimationFrame',
+	'requestAnimationFrame',
+	'onmessage',
+	'onmessageerror',
+	'addEventListener',
+	'removeEventListener',
+])
+
+/** Virtual source text used while binding one policy-inspected module. */
+export const POLICY_SOURCE_TEXTS: Map<string, string> = new Map()
 
 /** One script block extracted from a Vue SFC by the official compiler. */
 export interface VueScriptBlockInterface {
@@ -162,6 +199,126 @@ export function hasAllowedTripleSlashReference(path: string, source: ts.SourceFi
 	)
 }
 
+/**
+ * Whether the policy compiler can read one source path.
+ *
+ * @param path - The source path to inspect
+ * @returns `true` when the virtual or physical source exists
+ */
+export function hasPolicySource(path: string): boolean {
+	return POLICY_SOURCE_TEXTS.has(path) || ts.sys.fileExists(path)
+}
+
+/**
+ * Read one virtual or physical policy source.
+ *
+ * @param path - The source path to read
+ * @returns The source text when present
+ */
+export function readPolicySource(path: string): string | undefined {
+	return POLICY_SOURCE_TEXTS.get(path) ?? ts.sys.readFile(path)
+}
+
+/**
+ * Parse one virtual or physical policy source for the compiler host.
+ *
+ * @param path - The source path to parse
+ * @param language - The requested TypeScript language target
+ * @returns The parsed source file when present
+ */
+export function createPolicySource(
+	path: string,
+	language: ts.ScriptTarget | ts.CreateSourceFileOptions,
+): ts.SourceFile | undefined {
+	const content = readPolicySource(path)
+	return content === undefined ? undefined : ts.createSourceFile(path, content, language, true)
+}
+
+/**
+ * Bind one policy-inspected module without loading ambient host declarations.
+ *
+ * @param path - The source path used in diagnostics
+ * @param content - The TypeScript source text to bind
+ * @returns A one-file TypeScript program whose checker resolves lexical bindings
+ */
+export function createPolicyProgram(path: string, content: string): ts.Program {
+	const options: ts.CompilerOptions = {
+		allowJs: true,
+		noLib: true,
+		noResolve: true,
+		target: ts.ScriptTarget.Latest,
+		types: [],
+	}
+	POLICY_SOURCE_TEXTS.set(path, content)
+	const host = ts.createCompilerHost(options)
+	host.fileExists = hasPolicySource
+	host.readFile = readPolicySource
+	host.getSourceFile = createPolicySource
+	const program = ts.createProgram([path], options, host)
+	POLICY_SOURCE_TEXTS.delete(path)
+	return program
+}
+
+/**
+ * Whether an identifier is a standalone runtime value reference.
+ *
+ * @param node - The identifier occurrence to classify
+ * @param checker - The binder used to distinguish lexical values from ambient globals
+ * @returns `true` only when the occurrence reads or writes a runtime value
+ */
+export function isValueReferenceIdentifier(node: ts.Identifier, checker: ts.TypeChecker): boolean {
+	if (ts.isPartOfTypeNode(node)) return false
+
+	let ancestor: ts.Node = node.parent
+	while (!ts.isSourceFile(ancestor) && !ts.isStatement(ancestor)) {
+		if (ts.isTypeQueryNode(ancestor)) return false
+		if (ts.isComputedPropertyName(ancestor) && ts.isTypeElement(ancestor.parent)) return false
+		ancestor = ancestor.parent
+	}
+
+	const parent = node.parent
+	if (
+		(ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+		(ts.isPropertyAssignment(parent) && parent.name === node) ||
+		(ts.isPropertyDeclaration(parent) && parent.name === node) ||
+		(ts.isPropertySignature(parent) && parent.name === node) ||
+		(ts.isMethodDeclaration(parent) && parent.name === node) ||
+		(ts.isMethodSignature(parent) && parent.name === node) ||
+		(ts.isGetAccessorDeclaration(parent) && parent.name === node) ||
+		(ts.isSetAccessorDeclaration(parent) && parent.name === node) ||
+		(ts.isVariableDeclaration(parent) && parent.name === node) ||
+		(ts.isParameter(parent) && parent.name === node) ||
+		(ts.isBindingElement(parent) && (parent.name === node || parent.propertyName === node)) ||
+		(ts.isFunctionDeclaration(parent) && parent.name === node) ||
+		(ts.isFunctionExpression(parent) && parent.name === node) ||
+		(ts.isClassDeclaration(parent) && parent.name === node) ||
+		(ts.isClassExpression(parent) && parent.name === node) ||
+		(ts.isInterfaceDeclaration(parent) && parent.name === node) ||
+		(ts.isTypeAliasDeclaration(parent) && parent.name === node) ||
+		(ts.isTypeParameterDeclaration(parent) && parent.name === node) ||
+		(ts.isEnumDeclaration(parent) && parent.name === node) ||
+		(ts.isEnumMember(parent) && parent.name === node) ||
+		(ts.isModuleDeclaration(parent) && parent.name === node) ||
+		ts.isImportClause(parent) ||
+		ts.isImportSpecifier(parent) ||
+		ts.isNamespaceImport(parent) ||
+		ts.isImportEqualsDeclaration(parent) ||
+		ts.isExportSpecifier(parent) ||
+		ts.isNamespaceExport(parent) ||
+		ts.isNamespaceExportDeclaration(parent) ||
+		(ts.isLabeledStatement(parent) && parent.label === node) ||
+		(ts.isBreakOrContinueStatement(parent) && parent.label === node) ||
+		(ts.isJsxAttribute(parent) && parent.name === node)
+	) {
+		return false
+	}
+	return (
+		(ts.isShorthandPropertyAssignment(parent)
+			? checker.getShorthandAssignmentValueSymbol(parent)
+			: checker.getSymbolAtLocation(node)) === undefined
+	)
+}
+
 /** Inspect a Vue single-file component for syntax that can bypass declared import policy. */
 export function inspectVueCodingLaw(
 	path: string,
@@ -187,7 +344,22 @@ export function inspectVueCodingLaw(
 }
 
 /** Add syntax-wide coding-law violations while traversing one source tree. */
-export function inspectCodingNode(path: string, node: ts.Node, violations: string[]): void {
+export function inspectCodingNode(
+	path: string,
+	node: ts.Node,
+	violations: string[],
+	checker: ts.TypeChecker,
+): void {
+	if (
+		/^(?:app|src)[\\/]core[\\/]/u.test(path) &&
+		ts.isIdentifier(node) &&
+		WORKER_SCOPE_VALUE_GLOBALS.includes(node.text) &&
+		isValueReferenceIdentifier(node, checker)
+	) {
+		violations.push(
+			`${path}:${formatPolicyPosition(node)} forbids worker-scope global ${node.text} in core`,
+		)
+	}
 	if (
 		ts.isAsExpression(node) ||
 		ts.isTypeAssertionExpression(node) ||
@@ -242,13 +414,16 @@ export function inspectCodingNode(path: string, node: ts.Node, violations: strin
 	) {
 		violations.push(`${path}:${formatPolicyPosition(node)} forbids hidden function assignments`)
 	}
-	ts.forEachChild(node, (child) => inspectCodingNode(path, child, violations))
+	ts.forEachChild(node, (child) => inspectCodingNode(path, child, violations, checker))
 }
 
 /** Inspect one TypeScript source module for repository coding-law violations. */
 export function inspectCodingLaw(path: string, content: string): readonly string[] {
 	const violations: string[] = []
-	const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true)
+	const program = createPolicyProgram(path, content)
+	const source = program.getSourceFile(path)
+	if (source === undefined) throw new Error(`Policy source was not bound at ${path}`)
+	const checker = program.getTypeChecker()
 	const file = basename(path)
 
 	if (/\.[cm]?jsx?$/u.test(path)) {
@@ -362,7 +537,7 @@ export function inspectCodingLaw(path: string, content: string): readonly string
 		}
 	}
 
-	inspectCodingNode(path, source, violations)
+	inspectCodingNode(path, source, violations, checker)
 	return violations
 }
 

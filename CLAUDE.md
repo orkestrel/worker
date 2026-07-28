@@ -212,7 +212,7 @@ verifies its CLI is present before running and stops with a deviation report nam
 fallback when it is not. Benches are cross-provider reach only: a model native to the running
 harness never crosses a bridge.
 
-Three bench laws apply to every external engine:
+Four bench laws apply to every external engine:
 
 - **Transport by work class.** A short interactive exchange (one bounded question or a
   follow-up on a live thread, expected to finish in about two minutes) may use an MCP
@@ -221,19 +221,27 @@ Three bench laws apply to every external engine:
   session invisibly, while a journal survives any client-side failure.
 - **Journal first.** Every bench invocation leaves a tailable on-disk record under
   `tmp/<bench>/` (`tmp/codex/`, `tmp/cursor/`): the brief as a file, the event stream or
-  output log, and the final answer. The user tails the journal for live progress; the
-  journal's mtime is the liveness signal; the session id in the journal head is the recovery
-  handle. Briefs never travel as fragile shell arguments.
+  output log, and the final answer. Every long exec also carries exactly one Monitor on its
+  journal — a filtered tail that emits milestones (commands run, files changed, agent
+  messages, terminal states) and never the raw event firehose — so progress arrives in the
+  conversation while the journal stays tailable for depth. The filter exits on the exec's
+  terminal event, so the monitor's lifecycle matches the exec's and no watcher outlives its
+  subject. The journal's mtime is the liveness signal; the session id in the journal head is
+  the recovery handle. Briefs never travel as fragile shell arguments.
+- **Tracked, never loose.** Every bench unit is registered in the session task registry at
+  launch — subject, journal path, session id — and completed there at acceptance, so "what is
+  running" always has a first-class answer instead of a recollection of a command.
 - **Ephemeral journals.** Everything under `tmp/` is unit evidence, never committed. Bridges
   never delete journals; the Orchestrator sweeps `tmp/codex/` and `tmp/cursor/` once at
   campaign acceptance, after the final gate evidence is recorded. A journal surviving past
   its campaign is residue.
 
-For a long-running bridge exec the Orchestrator arms a stall watcher on the journal
-(file-exists on the final answer, mtime-stall threshold of a few minutes) instead of trusting
-the bridge to report failure — a wedged bridge is silent, and silence must never read as
-progress. A stalled journal follows the deviation ladder, with the session id from the
-journal head as the recovery handle.
+Every long bench exec is launched by the Orchestrator as a harness-tracked background command
+under a hard time cap, never detached from inside a bridge agent: the harness owns the
+lifecycle, completion re-invokes the session, and the cap kills a wedged bench loudly instead
+of trusting the bridge to report its own failure. A wedged bridge is silent, and silence must
+never read as progress. A stalled journal or a cap-killed exec follows the deviation ladder,
+with the session id from the journal head as the recovery handle.
 
 ### Cursor Grok
 
@@ -244,6 +252,10 @@ journal head as the recovery handle.
   `"$LOCALAPPDATA/cursor-agent/agent.cmd"` — verified with `--version` before first use. Long
   briefs are written to `tmp/cursor/<unit>-brief.md` and the prompt points at the file. The
   tee'd log is the bench's journal.
+- A long ask-mode run obeys the same launch, stream, and ledger discipline as a Codex exec:
+  the Orchestrator starts it as a harness-tracked background command under a time cap,
+  registers the unit in the task registry, and arms one Monitor on the tee'd log for
+  milestones. The `grok` bridge drafts the brief; it never detaches a run and ends its turn.
 - Read-only. `--force` never appears. Nothing it returns is applied.
 - Read the exact model id from `agent models` and store it in `CURSOR_GROK_MODEL`. Never guess
   or substitute.
@@ -260,11 +272,12 @@ journal head as the recovery handle.
 - Reached from Claude Code only through the `codex` role, on journaled, resumable
   `codex exec`; in a Codex session these are native agents.
 - **Every run is journaled and resumable.** `--json` streams the event log to
-  `tmp/codex/<unit>.jsonl` (gitignored; the user tails it live for progress — nobody polls),
-  `--output-last-message` captures the final answer as a file, and the session id from the
-  journal head goes in every bridge report so follow-ups continue the same session via
-  `codex exec resume <session-id>` with context intact. `--output-schema` is available when
-  the Orchestrator wants a machine-checkable return shape.
+  `tmp/codex/<unit>.jsonl` (gitignored; the Monitor emits its milestones and the user tails it
+  for depth — nobody polls), `--output-last-message` captures the final answer as a file, and
+  the session id from the journal head goes in the unit's task registry entry and every bridge
+  report so follow-ups continue the same session via `codex exec resume <session-id>` with
+  context intact. `--output-schema` is available when the Orchestrator wants a
+  machine-checkable return shape.
 - **Transport is chosen by work class.** The MCP wiring (`.mcp.json` registers
   `codex mcp-server`; verified tools `codex` to start a session, `codex-reply` to continue
   one; settings enable project MCP servers without prompting, so the wiring works headless —
@@ -272,19 +285,27 @@ journal head as the recovery handle.
   short interactive exchanges only, and the bridge persists the thread id to
   `tmp/codex/<unit>.session` the moment a response carries it — an interrupted MCP call with
   no persisted id is unrecoverable and treated as failed. Long-running work (audits,
-  implementation units) always uses the journaled CLI: the brief at
-  `tmp/codex/<unit>-brief.md`, one `codex exec --json` streaming to `tmp/codex/<unit>.jsonl`
-  with `--output-last-message`, foreground when it fits the shell cap, backgrounded with the
-  turn ended when it may not — the harness re-invocation is the wait; placeholder loops and
-  wait-promise reports are deviations. Every exec names its working directory with `-C`, and an
-  exec rooted outside a trusted git repository dies at launch unless `--skip-git-repo-check` is
-  passed, so cross-repo and fleet-container work rooted outside a checkout always passes it. A
-  launch is not a launch until the journal grows past its header: the bridge confirms the event
-  stream advanced beyond the session-configured head
-  before it reports the exec started, and treats an instantly-dead journal as a failed launch
-  whose tail is the evidence. Recovery ladder on interruption: persisted-id
-  `codex-reply` re-emission → fresh CLI session with the same brief file → for an interrupted
-  CLI exec, the journal survives and the Orchestrator chooses resume or fresh.
+  implementation units) always uses the journaled CLI, and the Orchestrator — never a bridge
+  agent — launches it as a harness-tracked background command: the brief at
+  `tmp/codex/<unit>-brief.md`, then one
+  `timeout <cap> codex exec --json … < /dev/null > tmp/codex/<unit>.jsonl` with
+  `--output-last-message`, started through the shell's background-task mechanism so the exec
+  appears in the session's task list, its completion re-invokes the session, and the cap kills
+  a wedged bench loudly. Stdin is always closed with `< /dev/null`: a background-launched exec
+  can inherit an open stdin pipe and wedge forever at "Reading additional input from stdin..."
+  before its first event, and a cap kill is the only thing that would ever surface it.
+  The journal remains the durable, resumable record and the session id the recovery handle. A
+  bridge that backgrounds an exec and ends its turn orphans it — no owner, no completion
+  signal, no death notice — so bridges keep two jobs only: drafting briefs and short MCP
+  exchanges. Placeholder wait loops and wait-promise reports are deviations. Every exec names
+  its working directory with `-C`, and an exec rooted outside a trusted git repository dies at
+  launch unless `--skip-git-repo-check` is passed, so cross-repo and fleet-container work
+  rooted outside a checkout always passes it. A launch is not a launch until the journal grows
+  past its header: the Orchestrator confirms the event stream advanced beyond the
+  session-configured head before recording the exec started, and treats an instantly-dead
+  journal as a failed launch whose tail is the evidence. Recovery ladder on interruption:
+  persisted-id `codex-reply` re-emission → fresh CLI session with the same brief file → for an
+  interrupted CLI exec, the journal survives and the Orchestrator chooses resume or fresh.
 - **The inverse bridge exists too:** Claude Code exposes `claude mcp serve`, registered in
   Codex's global config (`codex mcp add claude -- claude mcp serve`) so Codex-primary
   sessions reach Claude/Opus as first-class MCP tools instead of shelling to the CLI.
@@ -294,6 +315,11 @@ journal head as the recovery handle.
 - `implementer` runs `gpt-5.6-sol` at high effort with `--sandbox workspace-write` in the
   main checkout as the sole writer from a clean committed baseline, for bounded
   implementation.
+- **The exec sandbox denies network** (`--unshare-net`). Any unit that needs the registry or
+  any other remote endpoint — lockfile generation, real installs, live fetches — belongs to
+  the Orchestrator's own tracked commands or a network-capable native agent, never to a Codex
+  exec. A Sol exec observed hanging on `npm` until its cap fires is the signature of this
+  misroute, not of a slow bench.
 - Raise the analyst to `xhigh` only for a stated hard reasoning need. `gpt-5.6-terra` serves
   only explicitly mechanical, taste-free roles. `gpt-5.6-luna` requires a proven repeatable,
   high-volume workload.

@@ -123,14 +123,14 @@ then runs the configured scoped checks that prove environment isolation.
 - Lint is a separate complementary gate; neither lint nor root checking replaces
   environment-isolation checks.
 
-| Scope                        | `lib`                             | `types`           | Permitted host globals                              |
-| ---------------------------- | --------------------------------- | ----------------- | --------------------------------------------------- |
-| `src:core`, `app:core`       | `["ESNext"]`                      | `[]`              | None: no DOM, Node, host crypto, console, or timers |
-| `src:browser`, `app:browser` | `["ESNext","DOM","DOM.Iterable"]` | default           | DOM; no Node                                        |
-| `src:server`, `app:server`   | `["ESNext"]`                      | `["node"]`        | Node; no DOM                                        |
-| `src:styles`                 | `["ESNext"]`                      | `["vite/client"]` | Vite SCSS module declaration only                   |
+| Scope                        | `lib`                             | `types`           | Permitted host globals                                                                                                                   |
+| ---------------------------- | --------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `src:core`, `app:core`       | `["ESNext","WebWorker"]`          | `[]`              | WHATWG web interop: fetch family, streams, URL, Abort, encoders, crypto, timers, console, DOMException, structuredClone; no DOM, no Node |
+| `src:browser`, `app:browser` | `["ESNext","DOM","DOM.Iterable"]` | default           | DOM; no Node                                                                                                                             |
+| `src:server`, `app:server`   | `["ESNext"]`                      | `["node"]`        | Node; no DOM                                                                                                                             |
+| `src:styles`                 | `["ESNext"]`                      | `["vite/client"]` | Vite SCSS module declaration only                                                                                                        |
 
-Strict core is load-bearing. A host-dependent helper belongs in its host environment; for example, a `generateId` using host `crypto` belongs in server, not core.
+Strict core is load-bearing. A host-dependent helper belongs in its host environment; for example, a `generateId` reading `node:crypto` belongs in server, not core. The worker-only globals — `name`, `onrtctransform`, `close`, `postMessage`, `dispatchEvent`, `location`, `onerror`, `onlanguagechange`, `onoffline`, `ononline`, `onrejectionhandled`, `onunhandledrejection`, `self`, `importScripts`, `fonts`, `caches`, `crossOriginIsolated`, `indexedDB`, `isSecureContext`, `origin`, `scheduler`, `createImageBitmap`, `reportError`, `cancelAnimationFrame`, `requestAnimationFrame`, `onmessage`, `onmessageerror`, `addEventListener`, and `removeEventListener` — are policy-fenced out of core sources, so the `WebWorker` declarations widen the interop surface without admitting a worker host.
 
 Build/check config alignment:
 

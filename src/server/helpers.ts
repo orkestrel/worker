@@ -1,7 +1,7 @@
 import type { QueueExecution } from '@orkestrel/queue'
-import type { Guard, NodeThread, Reply } from './types.js'
-import { Worker as ThreadWorker } from 'node:worker_threads'
-import { isRecord } from '@orkestrel/contract'
+import type { Guard, NodeThread } from './types.js'
+import { Dispatch } from './Dispatch.js'
+import { Thread } from './Thread.js'
 
 // === The wire protocol (main ↔ thread)
 //
@@ -33,59 +33,7 @@ import { isRecord } from '@orkestrel/contract'
  * @returns A promise resolving the online {@link NodeThread}
  */
 export function spawnThread(script: string | URL, workerData: unknown): Promise<NodeThread> {
-	const worker = new ThreadWorker(script, { workerData })
-	const thread: NodeThread = { worker, alive: true, death: undefined }
-	// The persistent death latch — attached BEFORE any once-listener, so the first terminal
-	// event records its cause on the record even when it fires inside a batched exit drain.
-	worker.on('error', (error: Error) => {
-		thread.alive = false
-		if (thread.death === undefined) thread.death = error
-	})
-	worker.on('exit', (code: number) => {
-		thread.alive = false
-		if (thread.death === undefined) thread.death = new Error(`worker thread exited (code ${code})`)
-	})
-	return new Promise<NodeThread>((resolve, reject) => {
-		const onOnline = (): void => {
-			worker.off('error', onError)
-			worker.off('exit', onExit)
-			resolve(thread)
-		}
-		const onError = (error: Error): void => {
-			worker.off('online', onOnline)
-			worker.off('exit', onExit)
-			reject(error)
-		}
-		const onExit = (code: number): void => {
-			worker.off('online', onOnline)
-			worker.off('error', onError)
-			reject(new Error(`worker thread exited before coming online (code ${code})`))
-		}
-		worker.once('online', onOnline)
-		worker.once('error', onError)
-		worker.once('exit', onExit)
-	})
-}
-
-/**
- * Narrow an inbound `message` to a {@link Reply} for a given job `id` — no assertion.
- *
- * @remarks
- * A total {@link Guard}-style predicate (never throws): a record whose `id` matches and
- * whose `ok` discriminant is well-formed (a `true` carries any `value`; a `false` carries a
- * string `error`). Anything else — another job's reply, a malformed payload — is `false`, so
- * a {@link dispatch} listener ignores it (a thread that chatters on the channel can't corrupt
- * a job).
- *
- * @param value - The inbound message to narrow
- * @param id - The job id a matching reply must carry
- * @returns `true` (narrowing `value` to {@link Reply}) when it is this job's well-formed reply
- */
-export function isReply(value: unknown, id: string): value is Reply {
-	if (!isRecord(value)) return false
-	if (value.id !== id) return false
-	if (value.ok === true) return true
-	return value.ok === false && typeof value.error === 'string'
+	return new Thread(script, workerData).promise
 }
 
 /**
@@ -119,78 +67,5 @@ export function dispatch<TResult>(
 	execution: QueueExecution,
 	result: Guard<TResult>,
 ): Promise<TResult> {
-	const id = crypto.randomUUID()
-	const worker = thread.worker
-	return new Promise<TResult>((resolve, reject) => {
-		// The latched-death entry check: a thread that died BEFORE this dispatch attached has
-		// already emitted its `error` / `exit` (a batched exit drain delivers them before this
-		// microtask runs) — no listener below will ever fire, and a `postMessage` to it is a
-		// silent no-op. Reject NOW from the latch; this check + the attaches are synchronous,
-		// so there is no gap a death can slip through.
-		if (thread.death !== undefined || !thread.alive) {
-			reject(thread.death ?? new Error('worker thread is dead'))
-			return
-		}
-		let settled = false
-		let detach = (): void => {}
-		const settle = (action: () => void): void => {
-			if (settled) return
-			settled = true
-			detach()
-			action()
-		}
-		const onMessage = (value: unknown): void => {
-			if (!isReply(value, id)) return
-			if (value.ok) {
-				const reply = value.value
-				if (result(reply)) settle(() => resolve(reply))
-				else settle(() => reject(new Error('reply did not satisfy result guard')))
-				return
-			}
-			const message = value.error
-			settle(() => reject(new Error(message)))
-		}
-		const onError = (error: Error): void => {
-			thread.alive = false
-			settle(() => reject(error))
-		}
-		const onExit = (): void => {
-			thread.alive = false
-			settle(() => reject(new Error('worker thread exited')))
-		}
-		// Cooperative abort first, then EVICT: CPU-bound work won't honour the signal, so
-		// terminate the thread and mark it dead — the pool replaces it on the next acquire.
-		// NOTE: this `terminate()` may run TWICE — once here, and again when the pool's
-		// `destroy` hook (`thread.worker.terminate()`) tears down the now-dead thread its
-		// `validate` evicts. A second `terminate()` on an already-terminated Node thread is a
-		// safe, idempotent no-op (it resolves with the prior exit code), so do NOT "dedupe" it
-		// by gating on `alive` — that would skip the pool's eviction and reuse a tainted thread.
-		const onAbort = (): void => {
-			worker.postMessage({ id, command: 'abort' })
-			thread.alive = false
-			void worker.terminate()
-			settle(() => reject(new Error('job aborted')))
-		}
-		detach = (): void => {
-			worker.off('message', onMessage)
-			worker.off('error', onError)
-			worker.off('exit', onExit)
-			execution.signal.removeEventListener('abort', onAbort)
-		}
-		worker.on('message', onMessage)
-		worker.on('error', onError)
-		worker.on('exit', onExit)
-		if (execution.signal.aborted) {
-			onAbort()
-			return
-		}
-		execution.signal.addEventListener('abort', onAbort, { once: true })
-		// `postMessage` structured-clones `input`; a non-cloneable payload throws here —
-		// settle-reject so the listeners detach (no leak) rather than escaping the executor.
-		try {
-			worker.postMessage({ id, command: 'run', input })
-		} catch (error: unknown) {
-			settle(() => reject(error instanceof Error ? error : new Error(String(error))))
-		}
-	})
+	return new Dispatch(thread, input, execution, result).promise
 }

@@ -1,6 +1,6 @@
 import type { EmitterInterface } from '@orkestrel/emitter'
-import type { QueueEntryOptions } from '@orkestrel/queue'
-import type { WorkerEventMap, WorkerInterface, WorkerOptions } from './types.js'
+import type { QueueEntryOptions, QueueExecution } from '@orkestrel/queue'
+import type { WorkerEventMap, WorkerHandler, WorkerInterface, WorkerOptions } from './types.js'
 import { Emitter } from '@orkestrel/emitter'
 import { Pool } from '@orkestrel/pool'
 import { Queue } from '@orkestrel/queue'
@@ -44,28 +44,26 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 	// bridge. The emitter isolates a worker observer's throw (routing it to the `error`
 	// handler), so it never escapes into queue or pool.
 	readonly #emitter: Emitter<WorkerEventMap<TResult>>
+	readonly #handler: WorkerHandler<TInput, TResource, TResult>
 	#destroyed = false
 
 	constructor(options: WorkerOptions<TInput, TResource, TResult>) {
 		const concurrency = Math.max(1, options.concurrency ?? 1)
-		this.#emitter = new Emitter<WorkerEventMap<TResult>>({ on: options?.on, error: options?.error })
+		this.#handler = options.handler
+		this.#emitter = new Emitter<WorkerEventMap<TResult>>({
+			...(options.on !== undefined ? { on: options.on } : {}),
+			...(options.error !== undefined ? { error: options.error } : {}),
+		})
 		this.#pool = new Pool<TResource>({
 			...options.pool,
 			max: options.pool.max ?? concurrency,
 		})
 		this.#queue = new Queue<TInput, TResult>({
-			handler: async (input, execution) => {
-				const token = await this.#pool.acquire(execution.signal)
-				try {
-					return await options.handler(input, token.value, execution)
-				} finally {
-					token.release()
-				}
-			},
+			handler: this.#handle.bind(this),
 			concurrency,
-			retries: options.retries,
-			timeout: options.timeout,
-			store: options.store,
+			...(options.retries !== undefined ? { retries: options.retries } : {}),
+			...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+			...(options.store !== undefined ? { store: options.store } : {}),
 		})
 		this.#bridge()
 	}
@@ -127,6 +125,15 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		this.#destroyed = true
 		this.#queue.destroy()
 		void this.#pool.destroy()
+	}
+
+	async #handle(input: TInput, execution: QueueExecution): Promise<TResult> {
+		const token = await this.#pool.acquire(execution.signal)
+		try {
+			return await this.#handler(input, token.value, execution)
+		} finally {
+			token.release()
+		}
 	}
 
 	// Bridge the inner queue's lifecycle onto the worker's OWN emitter, once at construction.

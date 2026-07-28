@@ -58,6 +58,12 @@ const status = await queue.enqueue('https://example.com')
 | `createDatabaseQueueStore` | function | Create a `QueueStoreInterface` over any `DriverInterface` (memory / JSON / SQLite).                 |
 | `createMemoryQueueStore`   | function | Create the zero-plumbing in-memory `QueueStoreInterface` — a `MemoryQueueStore` over a plain `Map`. |
 
+### Helpers
+
+| API                  | Kind     | Summary                                                                  |
+| -------------------- | -------- | ------------------------------------------------------------------------ |
+| `createAttemptError` | function | Create the documented failure for an aborted or timed-out queue attempt. |
+
 ### Entities
 
 | API                  | Kind  | Summary                                                                                   |
@@ -277,6 +283,7 @@ queue.destroy() // abort then stop, releasing resources; idempotent
 - [`tests/guides/src/parity.test.ts`](../../tests/guides/src/parity.test.ts) — the `## Surface` ↔ `src/core` bijection (value + type exports) and the `QueueInterface` / `QueueStoreInterface` ↔ `Queue` / `MemoryQueueStore` / `DatabaseQueueStore` method bijection.
 - [`tests/src/core/Queue.test.ts`](../../tests/src/core/Queue.test.ts) — `enqueue` + FIFO at concurrency 1, the concurrency cap (`active` never exceeds the limit, surplus waits), retries (succeed-after-N and exhaust), the per-attempt timeout (the signal fires and the attempt fails), `abort` (rejects pending + fires in-flight signal, no retries), `pause` / `resume`, `clear` (drops pending, in-flight untouched), `stop` / `destroy`, the wake-park idle check (no handler call while idle), and durability over a real memory-backed store: persist-on-accept + remove-on-settle (success and exhausted-retries), the climbing attempt count persisted mid-flight, `restore()` re-running a prior queue's outstanding entries (a shared-store restart sim) at their persisted attempt count, a restored always-throwing entry settling without an unhandled rejection, lifecycle drains (`clear` / `abort`) removing the drained rows while an in-flight row is removed on its own settle, and the save-failure contract (a failed initial `save` rejects the `enqueue`; a failed per-attempt `save` is best-effort and the entry runs on).
 - [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createQueue` returns a working, typed instance end to end and honours its options + status surface, and `createDatabaseQueueStore` / `createMemoryQueueStore` round-trip a stored entry.
+- [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) — `createAttemptError` distinguishes the documented abort and timeout attempt failures.
 - [`tests/src/core/stores/MemoryQueueStore.test.ts`](../../tests/src/core/stores/MemoryQueueStore.test.ts) — the plain-`Map` DEFAULT store, driven directly over real inline `StoredEntry`s (no mocks): a `save` → `load` round-trip by value, `save` upserts by id (no duplicate), `remove` drops one (absent is a no-op), `load` returns EVERY outstanding entry (the bulk-restore semantic), `clear` empties it.
 - [`tests/src/core/stores/DatabaseQueueStore.test.ts`](../../tests/src/core/stores/DatabaseQueueStore.test.ts) — over a memory-backed driver store: a `save` → `load` round-trip (value + typed `input`, including nested-object payloads), `save` upserts by id (no duplicate), `remove` drops one (absent is a no-op), `load` returns all outstanding in key order, `clear` empties it, plus scale (200 entries), upsert churn on one id, and complex / edge-value inputs (nested arrays, booleans, nullables, optionals).
 

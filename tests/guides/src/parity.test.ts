@@ -31,6 +31,12 @@ const SELF_SPECIFIERS = ['@orkestrel/worker', '@src/core', '@src/server']
 // — only `{ name, kind }` — so the exemption filters by the known declaration names.
 const HIDDEN_EXEMPT = ['isAbort', 'isRecord', 'isRun'] // src/server/serve.ts
 
+// The coding-law gate requires every matching implementation class declaration to carry
+// `export`, while these orchestration classes are intentionally absent from src/server/index.ts
+// and therefore are not package exports. Source exports have no file/barrel attribution, so
+// exclude the exact internal class names from surface and fence-import parity.
+const INTERNAL_EXPORTS = ['Dispatch', 'NodeWorker', 'Thread']
+
 function walk(dir: string, acc: Record<string, string>): void {
 	for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
 		const relative = `${dir}/${entry.name}`
@@ -73,11 +79,19 @@ function exportsFor(specifier: string): readonly string[] {
 		source = createSource({ files, module })
 		specifierSources.set(module, source)
 	}
-	return source.exports().map((symbol) => symbol.name)
+	return source
+		.exports()
+		.filter((symbol) => !INTERNAL_EXPORTS.includes(symbol.name))
+		.map((symbol) => symbol.name)
 }
 
 it('manifest lists at least one guide', () => {
 	expect(manifest.length).toBeGreaterThan(0)
+})
+
+it('keeps internal orchestration classes out of the public server barrel', () => {
+	const barrel = readText('src/server/index.ts')
+	expect(INTERNAL_EXPORTS.every((name) => !barrel.includes(`./${name}.js`))).toBe(true)
 })
 
 for (const entry of manifest) {
@@ -89,7 +103,8 @@ for (const entry of manifest) {
 			expect(guide.surface().length).toBeGreaterThan(0)
 		})
 		it('documents every source export', () => {
-			expect(missingSymbols(source.exports(), guide.surface())).toEqual([])
+			const exports = source.exports().filter((symbol) => !INTERNAL_EXPORTS.includes(symbol.name))
+			expect(missingSymbols(exports, guide.surface())).toEqual([])
 		})
 		it('documents only real exports', () => {
 			expect(missingSymbols(guide.surface(), source.exports())).toEqual([])
