@@ -11,7 +11,7 @@
 Create a pool over a resource lifecycle, then `acquire` / `release` around the work:
 
 ```ts
-import { createPool } from '@src/core'
+import { createPool } from '@orkestrel/pool'
 
 const pool = createPool<Connection>({
 	create: () => connect(), // make a resource (called lazily, up to `max`)
@@ -78,7 +78,7 @@ These invariants hold across `src/core` ↔ `pool.md`:
 The pool exposes a typed `emitter` (AGENTS §13) carrying its resource lifecycle for fire-and-forget observers — logging, metrics, tracing. Subscribe via `pool.emitter.on(...)`, or wire initial listeners through the reserved `on?` option; supply an `error?` handler to receive a listener's throw. **Emitting is observation-only**: every event fires strictly AFTER the relevant create / acquire / release / destroy transition, so a listener can never change what the pool does — and a throwing listener can never corrupt it (see the safety guarantee below).
 
 ```ts
-import { createPool } from '@src/core'
+import { createPool } from '@orkestrel/pool'
 
 const pool = createPool<Connection>({
 	create: () => connect(),
@@ -102,7 +102,7 @@ pool.emitter.on('destroy', () => metrics.increment('pool.destroyed'))
 ### A resource pool
 
 ```ts
-import { createPool } from '@src/core'
+import { createPool } from '@orkestrel/pool'
 
 const pool = createPool<Connection>({
 	create: () => connect(), // make a resource (called lazily, up to `max`)

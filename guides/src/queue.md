@@ -36,7 +36,7 @@
 Create a queue over a handler, then `enqueue` inputs and await their results:
 
 ```ts
-import { createQueue } from '@src/core'
+import { createQueue } from '@orkestrel/queue'
 
 const queue = createQueue<string, number>({
 	handler: async (url, { signal }) => (await fetch(url, { signal })).status,
@@ -134,7 +134,7 @@ A `QueueStoreInterface` is the durable backing for a queue's **outstanding** ent
 
 ```ts
 import { stringShape } from '@orkestrel/contract'
-import { createMemoryQueueStore } from '@src/core'
+import { createMemoryQueueStore } from '@orkestrel/queue'
 
 // An ephemeral, memory-backed store (tests, a non-durable queue):
 const store = createMemoryQueueStore(stringShape())
@@ -154,7 +154,7 @@ Pass a `store` to `createQueue` and the queue mirrors its outstanding entries au
 ```ts
 import { stringShape } from '@orkestrel/contract'
 import { createMemoryDriver } from '@orkestrel/database'
-import { createDatabaseQueueStore, createQueue } from '@src/core'
+import { createDatabaseQueueStore, createQueue } from '@orkestrel/queue'
 
 const store = createDatabaseQueueStore(stringShape(), createMemoryDriver())
 const queue = createQueue<string, number>({ store, handler: (url) => fetchStatus(url) })
@@ -172,7 +172,7 @@ Accepting work durably is NOT best-effort: a failed initial `save` rejects the `
 `Queue` exposes a typed `emitter` (AGENTS §13) carrying its lifecycle moments for fire-and-forget observers — logging, metrics, tracing. Subscribe via `queue.emitter.on(...)`, or wire initial listeners through the reserved `on?` option; supply an `error?` handler to receive a listener's throw. **Emitting is observation-only**: every event fires strictly AFTER the relevant wake / park / settle transition, so a listener can never change what the engine does — and a throwing listener can never corrupt it (see the safety guarantee below).
 
 ```ts
-import { createQueue } from '@src/core'
+import { createQueue } from '@orkestrel/queue'
 
 const queue = createQueue<string, number>({
 	handler: (url) => fetchStatus(url),
@@ -196,7 +196,7 @@ queue.emitter.on('failure', (id, error) => log.warn(`job ${id} failed`, error))
 ### Create a queue
 
 ```ts
-import { createQueue } from '@src/core'
+import { createQueue } from '@orkestrel/queue'
 
 // Ordered (concurrency defaults to 1): each entry runs to completion before the next.
 const queue = createQueue<Job, Output>({ handler: (job) => run(job) })

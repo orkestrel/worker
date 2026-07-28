@@ -2,11 +2,17 @@
 	"extends": "../../tsconfig.json",
 	"compilerOptions": {
 		"lib": ["ESNext"],
+		"types": [],
 		"noEmit": false,
 		"declaration": true,
 		"emitDeclarationOnly": true,
 		"rootDir": "../../src/core",
 		"outDir": "../../dist/src/core"
 	},
-	"include": ["../../src/core/**/*.ts"]
+	"include": [
+		"../../src/core/**/*.cts",
+		"../../src/core/**/*.mts",
+		"../../src/core/**/*.ts",
+		"../../src/core/**/*.tsx"
+	]
 }
