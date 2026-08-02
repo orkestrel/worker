@@ -1,4 +1,4 @@
-// @ts-nocheck — a real worker-thread script (see double.ts). Uses `parentPort` directly to
+// A real worker-thread script. Uses `parentPort` directly to
 // post a STRAY message BEFORE the normal reply, proving the main side's `isReply` guard
 // ignores foreign / malformed payloads (no `id`, then a non-matching `id`) and still resolves
 // the correct reply for the job. The stray posts run inside the handler so they precede the
@@ -7,8 +7,9 @@ import { parentPort } from 'node:worker_threads'
 import { serveWorker } from '../../../../src/server/serve.ts'
 
 serveWorker({
-	input: (value) => typeof value === 'number',
+	input: (value: unknown): value is number => typeof value === 'number',
 	handler: (value) => {
+		if (parentPort === null) throw new Error('worker parent port is unavailable')
 		// A message with NO `id` — `isReply` rejects it (id mismatch) and the listener ignores it.
 		parentPort.postMessage({ noise: true })
 		// A well-formed-looking reply for a DIFFERENT id — also ignored (wrong id).

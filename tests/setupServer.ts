@@ -2,10 +2,13 @@
 // `src:server` project. `node:fs` / `node:os` / `node:path` imports belong here,
 // never in `setup.ts` (AGENTS §16.1).
 
+import type { NodeWorkerOptions } from '@src/server'
+import type { TestRecorderInterface } from './setup.js'
+import type { Worker as ThreadWorker } from 'node:worker_threads'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach } from 'vitest'
+import { isRecord } from '@orkestrel/contract'
 
 // A fresh on-disk JSON-store path under the OS temp dir, with a `cleanup` thunk
 // that removes its directory. Used by the `createJSONQueueStore` tests, which need
@@ -19,46 +22,120 @@ export function tempDatabasePath(): { readonly path: string; readonly cleanup: (
 	}
 }
 
-// ── Teardown registrar (tracked-resource cleanup) ────────────────────────────
-//
-// AGENTS §16.1: the duplicated `const tracked = []` + `afterEach(dispose-all)` +
-// `track(item)` trio every node-resource suite hand-rolls — the started-worker
-// `destroy()` form and the temp-dir `cleanup()` form — folded into one registrar.
-// The caller supplies the disposer; the registrar holds the tracked list AND wires
-// its OWN `afterEach` to dispose every tracked item (awaiting async disposers), so
-// no thread / temp-file leak across a suite. A real cleanup wiring, not a mock.
+/** Getter-backed Node worker options whose property reads are recorded. */
+export class NodeWorkerOptionsProbe<TInput, TResult> implements NodeWorkerOptions<TInput, TResult> {
+	#values: Required<NodeWorkerOptions<TInput, TResult>>
+	readonly #reads: TestRecorderInterface<
+		readonly [property: keyof NodeWorkerOptions<TInput, TResult>]
+	>
 
-/** A tracked-resource teardown registrar — see {@link createTeardown}. */
-export interface TeardownInterface<T> {
-	/** Register `item` for disposal at `afterEach`, returning it for inline use. */
-	track<U extends T>(item: U): U
+	constructor(
+		values: Required<NodeWorkerOptions<TInput, TResult>>,
+		reads: TestRecorderInterface<readonly [property: keyof NodeWorkerOptions<TInput, TResult>]>,
+	) {
+		this.#values = values
+		this.#reads = reads
+	}
+
+	get script(): string | URL {
+		this.#reads.handler('script')
+		return this.#values.script
+	}
+
+	get input(): NodeWorkerOptions<TInput, TResult>['input'] {
+		this.#reads.handler('input')
+		return this.#values.input
+	}
+
+	get result(): NodeWorkerOptions<TInput, TResult>['result'] {
+		this.#reads.handler('result')
+		return this.#values.result
+	}
+
+	get workerData(): Required<NodeWorkerOptions<TInput, TResult>>['workerData'] {
+		this.#reads.handler('workerData')
+		return this.#values.workerData
+	}
+
+	get concurrency(): Required<NodeWorkerOptions<TInput, TResult>>['concurrency'] {
+		this.#reads.handler('concurrency')
+		return this.#values.concurrency
+	}
+
+	get retries(): Required<NodeWorkerOptions<TInput, TResult>>['retries'] {
+		this.#reads.handler('retries')
+		return this.#values.retries
+	}
+
+	get timeout(): Required<NodeWorkerOptions<TInput, TResult>>['timeout'] {
+		this.#reads.handler('timeout')
+		return this.#values.timeout
+	}
+
+	get store(): Required<NodeWorkerOptions<TInput, TResult>>['store'] {
+		this.#reads.handler('store')
+		return this.#values.store
+	}
+
+	replace(values: Required<NodeWorkerOptions<TInput, TResult>>): void {
+		this.#values = values
+	}
 }
 
-/**
- * Create a {@link TeardownInterface} that disposes every tracked item after each test —
- * the one general form of the `tracked[]` + `afterEach` + `track` pattern the server
- * suites repeat (AGENTS §16.1). Call it at a suite's top level: it registers its OWN
- * `afterEach` immediately, draining the tracked list and running `dispose` on each item
- * (awaiting a returned promise), so a spawned worker thread is `terminate()`d and a
- * temp-dir `cleanup()`ed even when an assertion throws mid-test. The disposer is the
- * caller's (`(worker) => worker.destroy()` / `(cleanup) => cleanup()`), so the
- * registrar stays agnostic to what it tears down.
- *
- * @typeParam T - The kind of item tracked (the disposer's parameter type)
- * @param dispose - How to dispose one tracked item (may be async)
- * @returns A registrar whose `track` enrolls an item and returns it
- */
-export function createTeardown<T>(
-	dispose: (item: T) => void | Promise<void>,
-): TeardownInterface<T> {
-	const tracked: T[] = []
-	afterEach(async () => {
-		for (const item of tracked.splice(0)) await dispose(item)
-	})
-	return {
-		track(item) {
-			tracked.push(item)
-			return item
-		},
+/** A pending reply from a real worker thread with stable listener identities. */
+export class ThreadReply {
+	readonly #thread: ThreadWorker
+	readonly #id: string
+	readonly #promise: Promise<Readonly<Record<string, unknown>>>
+	readonly #resolve: (value: Readonly<Record<string, unknown>>) => void
+	readonly #reject: (reason?: unknown) => void
+	readonly #messageHandler: (value: unknown) => void
+	readonly #failHandler: (error: Error) => void
+	readonly #exitHandler: (code: number) => void
+	#settled = false
+
+	constructor(thread: ThreadWorker, id: string) {
+		this.#thread = thread
+		this.#id = id
+		const settlement = Promise.withResolvers<Readonly<Record<string, unknown>>>()
+		this.#promise = settlement.promise
+		this.#resolve = settlement.resolve
+		this.#reject = settlement.reject
+		this.#messageHandler = this.#message.bind(this)
+		this.#failHandler = this.#fail.bind(this)
+		this.#exitHandler = this.#exit.bind(this)
+		this.#thread.on('message', this.#messageHandler)
+		this.#thread.once('messageerror', this.#failHandler)
+		this.#thread.once('error', this.#failHandler)
+		this.#thread.once('exit', this.#exitHandler)
+	}
+
+	get promise(): Promise<Readonly<Record<string, unknown>>> {
+		return this.#promise
+	}
+
+	#message(value: unknown): void {
+		if (this.#settled || !isRecord(value) || value.id !== this.#id) return
+		this.#settled = true
+		this.#detach()
+		this.#resolve(Object.freeze({ ...value }))
+	}
+
+	#exit(code: number): void {
+		this.#fail(new Error(`worker thread exited before replying (code ${String(code)})`))
+	}
+
+	#fail(error: Error): void {
+		if (this.#settled) return
+		this.#settled = true
+		this.#detach()
+		this.#reject(error)
+	}
+
+	#detach(): void {
+		this.#thread.off('message', this.#messageHandler)
+		this.#thread.off('messageerror', this.#failHandler)
+		this.#thread.off('error', this.#failHandler)
+		this.#thread.off('exit', this.#exitHandler)
 	}
 }

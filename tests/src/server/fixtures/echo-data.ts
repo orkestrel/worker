@@ -1,4 +1,4 @@
-// @ts-nocheck — a real worker-thread script (see double.ts).
+// A real worker-thread script.
 import { workerData } from 'node:worker_threads'
 import { serveWorker } from '../../../../src/server/serve.ts'
 
@@ -7,6 +7,6 @@ import { serveWorker } from '../../../../src/server/serve.ts'
 // `createNodeWorker`'s `workerData` option reaches the worker side intact across the structured
 // clone. The `result` guard on the main side narrows whatever shape `workerData` carries.
 serveWorker({
-	input: (value) => typeof value === 'number',
+	input: (value: unknown): value is number => typeof value === 'number',
 	handler: () => workerData,
 })

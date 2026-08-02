@@ -24,7 +24,7 @@ import { Worker } from './Worker.js'
  *
  * @example
  * ```ts
- * import { createWorker } from '@src/core'
+ * import { createWorker } from '@orkestrel/worker'
  *
  * const worker = createWorker<Query, Connection, Rows>({
  * 	pool: { create: () => connect(), destroy: (connection) => connection.close() },

@@ -187,10 +187,12 @@ environment contributes, its test-project label, and — on the `src` axis — i
 and build formats, or — on the `app` axis — its optional runtime entry.
 
 `ViteMachinery` names the three host-specific pipelines a workspace's generated `vite.config.ts` may
-carry: `browser` for the CSS pipeline and the Playwright-backed browser test project, `vue` for the
+carry: `browser` selects the shared root CSS-analysis and Playwright machinery, `vue` selects the
 single-file-component, HTML, and development-server machinery an application browser environment
-needs, and `output` for build-output containment. It never selects a boundary guarantee — those ship
-in every shape, as the compilers section sets out.
+needs, and `output` selects build-output containment. The root machinery selection never attaches a
+`css` property to a nonbrowser project: only the `srcBrowser` and `appBrowser` factories own
+`ENVIRONMENT_CSS`. It never selects a boundary guarantee — those ship in every shape, as the
+compilers section sets out.
 
 `ViteFacts` is the optional structural-fact slice shared by every root Vite compiler:
 `bin`, `integration`, and `service` each select their matching standalone project when `true`;
@@ -317,6 +319,7 @@ From [`types.ts`](../../src/server/types.ts).
 | `CatalogAllowance`      | type      |
 | `SyncBase`              | type      |
 | `SyncBranch`            | type      |
+| `VersionLookup`         | type      |
 | `GuideWrite`            | interface |
 | `MaterializerInterface` | interface |
 | `SyncEventMap`          | type      |
@@ -344,7 +347,9 @@ identity, and `WriteDirectoryResult` pairs the final anchor with the subset a ca
 `CatalogAllowance` are one-cell `Float64Array` allowances: the former shares a byte budget across
 concurrent network readers, while the latter shares one entry budget across every fleet root and
 child visited by a catalog operation. `SyncBase` and `SyncBranch` are normalized strings returned
-only by their corresponding boundary parsers.
+only by their corresponding boundary parsers. `VersionLookup` is the bare-name registry result:
+a successful lookup carries `latest` with `freshness: 'behind'` because no declared range was
+supplied as a reference, while `missing` and `failed` carry a `note` and no invented version.
 
 `SyncOptions` groups the injectable endpoints under the entity they configure — `guides` with
 `base`, `branch`, and `timeout`; `registry` with `base` and `timeout` — alongside `concurrency`,
@@ -449,7 +454,10 @@ form. `HEX_PATTERN` requires whole lowercase byte pairs, and `SYNC_BASELINE_PATT
 `0.0.1`. `BASE_DEV_DEPENDENCIES` is the host-neutral tooling baseline every generated workspace
 gets; `SOURCE_BROWSER_DEV_DEPENDENCIES` adds the real browser providers a published browser environment
 needs, and `APP_BROWSER_DEV_DEPENDENCIES` extends that with the Vue toolchain a private browser
-application needs. `SCAFFOLD_RANGE` is the range generated workspaces pin this package at.
+application needs. Vite is minor-pinned at `~8.2.0`: the generated boundary consumes the reviewed
+8.2 `CSSOptions`, `preprocessCSS`, and `isCSSRequest` surface, while the selected
+`css.transformer` / `lightningcss` path is experimental and must not float into an unreviewed minor.
+`SCAFFOLD_RANGE` is the range generated workspaces pin this package at.
 `CHECKOUT_ACTION_SHA` and `SETUP_NODE_ACTION_SHA` pin the two official CI actions to immutable
 commits. `TYPESCRIPT_EXTENSIONS` is the module extension set every generated scoped check covers.
 `JSON_PRINT_WIDTH` and `JSON_TAB_WIDTH` mirror the formatter configuration, so computed JSON is
@@ -684,6 +692,7 @@ From [`parsers.ts`](../../src/server/parsers.ts).
 | Name                       | Kind     |
 | -------------------------- | -------- |
 | `parseSyncDependencies`    | function |
+| `parseSyncNames`           | function |
 | `parseFilesystemPaths`     | function |
 | `parsePortablePaths`       | function |
 | `parseWritePreconditions`  | function |
@@ -703,7 +712,9 @@ subset used in raw-guide URLs: it rejects overlong values, empty or dot-leading 
 `@{`, the single `@`, trailing dots, and `.lock` suffixes without regard to case.
 `parseSyncCurrent` snapshots only the declared guide references, enforcing both the per-file and
 cumulative byte allowance. The three array parsers return frozen copies read through property
-descriptors, so a caller-supplied array can never smuggle in a getter.
+descriptors, so a caller-supplied array can never smuggle in a getter. `parseSyncNames` snapshots a
+bounded dense array of unique npm package names and validates only the names; declaration ranges
+remain the responsibility of `parseSyncDependencies` and the blueprint gate.
 
 ### Shapers — core
 
@@ -1081,8 +1092,9 @@ streams, `URL`, `AbortController`, the text encoders, `crypto`, timers, `console
 is one declaration set for a host-independent module, not a host. `viteHeader` renders the shared
 header — the alias block
 derived from the tsconfig paths, plus the environment-boundary plugin — and `viteMachinery` is the
-one place the header's axes are derived, read by `rootViteConfig`, `singleSrcViteConfig`,
-`applicationViteConfig`, and `configArtifacts` alike so no caller can invent a fourth answer.
+one place the root header's axes are derived, read by `rootViteConfig`, `singleSrcViteConfig`, and
+`applicationViteConfig`; `configArtifacts` delegates to those roots rather than deriving another
+answer.
 
 **The boundary guarantees do not vary by blueprint.** Every generated `vite.config.ts` — a
 `core`-only library, an application of `app/core` alone, or the full six-environment workspace —
@@ -1095,12 +1107,12 @@ module graph never records — has no other enforcement point in workspace-owned
 and toolchain modules are outside that ownership boundary. Only host-specific pipelines vary,
 along the three `ViteMachinery` axes:
 
-| Machinery                                                         | Emitted when                         |
-| ----------------------------------------------------------------- | ------------------------------------ |
-| CSS pipeline (`ENVIRONMENT_CSS`, `preprocessCSS`, `isCSSRequest`) | a `src` or `app` browser environment |
-| Playwright provider and `hasChromium`                             | a `src` or `app` browser environment |
-| Vue plugin, HTML boundary, browser development server             | an `app` browser environment         |
-| Output containment (`outputBoundary`, `enforceOutputPath`)        | anything the workspace builds        |
+| Machinery                                                                | Emitted when                         |
+| ------------------------------------------------------------------------ | ------------------------------------ |
+| Shared CSS analysis (`ENVIRONMENT_CSS`, `preprocessCSS`, `isCSSRequest`) | a `src` or `app` browser environment |
+| Playwright provider and `resolveChromium`                                | a `src` or `app` browser environment |
+| Vue plugin, HTML boundary, browser development server                    | an `app` browser environment         |
+| Output containment (`outputBoundary`, `enforceOutputPath`)               | anything the workspace builds        |
 
 An application of `app/core` alone is the sole shape that builds nothing, so it is the sole shape
 without output containment — and it still carries every boundary guarantee above.
@@ -1120,7 +1132,9 @@ slice carries `global` to integration and the source-browser compiler without ad
 project.
 
 `coreViteConfig`, `srcViteConfig`, `binViteConfig`, and `appViteConfig` emit the thin per-target
-wrappers, while `binTsconfig` emits the executable declaration scope; `rootViteConfig`,
+wrappers. `coreViteConfig()` is parameterless and never imports or attaches browser CSS machinery;
+the root `srcCore` factory and its wrapper stay host-independent even when the workspace also owns a
+browser target. `binTsconfig` emits the executable declaration scope; `rootViteConfig`,
 `singleSrcViteConfig`, and `applicationViteConfig` emit the root configuration for a library-only,
 single non-core `src` environment, and application-bearing workspace respectively; and
 `policyViteProject`, `guidesViteProject`, `integrationViteProject`, and `serviceViteProject` emit
@@ -1282,16 +1296,18 @@ The interface also exposes the readonly `emitter`.
 
 #### `SyncInterface`
 
-| Method     | Returns                            |
-| ---------- | ---------------------------------- |
-| `guides`   | `Promise<readonly GuideSync[]>`    |
-| `versions` | `Promise<readonly VersionSync[]>`  |
-| `catalog`  | `Promise<readonly CatalogEntry[]>` |
-| `pull`     | `Promise<SyncReport>`              |
-| `write`    | `Promise<readonly string[]>`       |
-| `destroy`  | `void`                             |
+| Method     | Returns                             |
+| ---------- | ----------------------------------- |
+| `lookup`   | `Promise<readonly VersionLookup[]>` |
+| `guides`   | `Promise<readonly GuideSync[]>`     |
+| `versions` | `Promise<readonly VersionSync[]>`   |
+| `catalog`  | `Promise<readonly CatalogEntry[]>`  |
+| `pull`     | `Promise<SyncReport>`               |
+| `write`    | `Promise<readonly string[]>`        |
+| `destroy`  | `void`                              |
 
-`guides(deps, current?)` fetches each dependency's upstream guide. The optional `current` map is
+`lookup(names)` resolves registry versions from bare package names, with no declaration range
+required or synthesized. `guides(deps, current?)` fetches each dependency's upstream guide. The optional `current` map is
 keyed by dependency name: with it, a fetched guide byte-equal to its entry verdicts `current` and
 anything else verdicts `behind`; without it, every successful fetch verdicts `behind`, because no
 reference means it needs syncing. `versions(deps)` compares each declared range to the registry
@@ -1671,10 +1687,13 @@ What it rejects is equally deliberate:
 Unsupported stylesheet `@import` or `url()` syntax is an error rather than a silently skipped
 dependency. **`publicDir` is disabled on every generated build target**: an asset that is not
 reachable through the module graph is not silently copied past the boundary. The output plugin
-fails during configuration when a caller attempts to enable `publicDir`; browser builds likewise
-reject a nonzero `assetsInlineLimit`, keeping asset bytes external and visible to output auditing
-before any output directory mutation. A caller-supplied Rolldown `output.dir` or `output.file` is
-also rejected during configuration; the exact generated `build.outDir` is the sole write root.
+fails during configuration when a caller attempts to enable `publicDir`. Published `srcBrowser`
+targets use Vite library mode, where assets are always inlined and `assetsInlineLimit` is ignored,
+so their generated shapes omit that ineffective option. The normal `appBrowser` build retains
+`assetsInlineLimit: 0`, and the output plugin rejects a nonzero limit only for that non-library
+browser build, keeping application asset bytes external and visible to output auditing before any
+output directory mutation. A caller-supplied Rolldown `output.dir` or `output.file` is also rejected
+during configuration; the exact generated `build.outDir` is the sole write root.
 
 **The policy suite.** [`tests/setupPolicy.ts`](../../tests/setupPolicy.ts) is a narrow structural
 policy pass built on the official TypeScript compiler. It exists for exactly the laws a linter
@@ -2297,6 +2316,7 @@ import { createSync } from '@orkestrel/scaffold/server'
 
 const sync = createSync({ concurrency: 4, retries: 1 })
 
+await sync.lookup(['@orkestrel/contract'])
 const report = await sync.pull('.')
 if (report.failed === 0) await sync.write(report, '.')
 
@@ -2421,6 +2441,7 @@ import {
 	parseSyncBranch,
 	parseSyncCurrent,
 	parseSyncDependencies,
+	parseSyncNames,
 	parseSyncOptions,
 	parseWritePreconditions,
 	syncGuideOptionsShape,
@@ -2443,6 +2464,7 @@ parseMaterializerOptions({ host: './dist/host' })
 parseSyncBase('registry.npmjs.org') // 'https://registry.npmjs.org'
 parseSyncBranch('main')
 parseSyncCurrent({ '@orkestrel/contract': '# contract\n' }, ['@orkestrel/contract'], 16_777_216)
+parseSyncNames(['@orkestrel/contract', 'zod'])
 parseSyncDependencies([{ name: '@orkestrel/contract', range: '^0.0.7' }], false)
 parsePortablePaths(['src/core/index.ts'], 1_000)
 parseFilesystemPaths(['./packages'], 1_000)

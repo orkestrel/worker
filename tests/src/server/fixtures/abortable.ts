@@ -1,12 +1,11 @@
-// @ts-nocheck — a real worker-thread script (see double.ts). Cooperative: it AWAITS its
-// abort signal and resolves the sentinel `-1` once it fires, so a manually-driven test
-// (serve.test.ts) can post `{ command: 'abort' }` and observe the handler's signal react.
+// A real worker-thread script. Cooperative: it awaits its abort signal and resolves the
+// sentinel `-1` once it fires, so a manually-driven test can observe the handler react.
 import { serveWorker } from '../../../../src/server/serve.ts'
 
 serveWorker({
-	input: (value) => typeof value === 'number',
+	input: (value: unknown): value is number => typeof value === 'number',
 	handler: (value, { signal }) =>
-		new Promise((resolve) => {
+		new Promise<number>((resolve) => {
 			if (signal.aborted) {
 				resolve(-1)
 				return

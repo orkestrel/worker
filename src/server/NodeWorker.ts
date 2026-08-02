@@ -1,7 +1,9 @@
 import type { WorkerInterface } from '@src/core'
-import type { QueueExecution } from '@orkestrel/queue'
+import type { Guard } from '@orkestrel/contract'
+import type { QueueExecution, QueueStoreInterface } from '@orkestrel/queue'
 import type { NodeThread, NodeWorkerOptions } from './types.js'
 import { createWorker } from '@src/core'
+import { attempt } from '@orkestrel/contract'
 import { dispatch, spawnThread } from './helpers.js'
 
 /**
@@ -12,10 +14,24 @@ import { dispatch, spawnThread } from './helpers.js'
  * public entity remains the plain core {@link WorkerInterface}.
  */
 export class NodeWorker<TInput, TResult> {
-	readonly #options: NodeWorkerOptions<TInput, TResult>
+	readonly #script: string | URL
+	readonly #input: Guard<TInput>
+	readonly #result: Guard<TResult>
+	readonly #workerData: unknown
+	readonly #concurrency: number | undefined
+	readonly #retries: number | undefined
+	readonly #timeout: number | undefined
+	readonly #store: QueueStoreInterface<TInput> | undefined
 
 	constructor(options: NodeWorkerOptions<TInput, TResult>) {
-		this.#options = options
+		this.#script = options.script
+		this.#input = options.input
+		this.#result = options.result
+		this.#workerData = options.workerData
+		this.#concurrency = options.concurrency
+		this.#retries = options.retries
+		this.#timeout = options.timeout
+		this.#store = options.store
 	}
 
 	build(): WorkerInterface<TInput, TResult> {
@@ -24,20 +40,18 @@ export class NodeWorker<TInput, TResult> {
 				create: this.#create.bind(this),
 				destroy: this.#destroy.bind(this),
 				validate: this.#validate.bind(this),
-				...(this.#options.concurrency !== undefined ? { max: this.#options.concurrency } : {}),
+				...(this.#concurrency !== undefined ? { max: this.#concurrency } : {}),
 			},
 			handler: this.#handle.bind(this),
-			...(this.#options.concurrency !== undefined
-				? { concurrency: this.#options.concurrency }
-				: {}),
-			...(this.#options.retries !== undefined ? { retries: this.#options.retries } : {}),
-			...(this.#options.timeout !== undefined ? { timeout: this.#options.timeout } : {}),
-			...(this.#options.store !== undefined ? { store: this.#options.store } : {}),
+			...(this.#concurrency !== undefined ? { concurrency: this.#concurrency } : {}),
+			...(this.#retries !== undefined ? { retries: this.#retries } : {}),
+			...(this.#timeout !== undefined ? { timeout: this.#timeout } : {}),
+			...(this.#store !== undefined ? { store: this.#store } : {}),
 		})
 	}
 
 	#create(): Promise<NodeThread> {
-		return spawnThread(this.#options.script, this.#options.workerData)
+		return spawnThread(this.#script, this.#workerData)
 	}
 
 	async #destroy(thread: NodeThread): Promise<void> {
@@ -49,9 +63,11 @@ export class NodeWorker<TInput, TResult> {
 	}
 
 	#handle(input: TInput, thread: NodeThread, execution: QueueExecution): Promise<TResult> {
-		if (!this.#options.input(input)) {
+		const outcome = attempt(() => this.#input(input))
+		if (!outcome.success) return Promise.reject(outcome.error)
+		if (!outcome.value) {
 			return Promise.reject(new Error('input did not satisfy input guard'))
 		}
-		return dispatch(thread, input, execution, this.#options.result)
+		return dispatch(thread, input, execution, this.#result)
 	}
 }

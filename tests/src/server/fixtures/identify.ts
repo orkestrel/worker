@@ -1,4 +1,4 @@
-// @ts-nocheck — a real worker-thread script (see double.ts).
+// A real worker-thread script.
 import { threadId } from 'node:worker_threads'
 import { serveWorker } from '../../../../src/server/serve.ts'
 
@@ -8,7 +8,7 @@ import { serveWorker } from '../../../../src/server/serve.ts'
 // thread serves multiple sequential jobs once it is returned to idle). The input gates the
 // job by a small busy-spin so several jobs genuinely overlap in flight at concurrency > 1.
 serveWorker({
-	input: (value) => typeof value === 'number',
+	input: (value: unknown): value is number => typeof value === 'number',
 	handler: (value) => {
 		const deadline = Date.now() + value
 		while (Date.now() < deadline) {

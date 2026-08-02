@@ -21,7 +21,7 @@ npm install @orkestrel/worker
 
 ## Requirements
 
-- Node.js >= 24
+- Node.js >= 22.12.0
 - ESM and CommonJS builds ship for both the core and server entry points
 
 ## Usage
@@ -37,7 +37,7 @@ const worker = createWorker<Query, Connection, Rows>({
 })
 
 const rows = await worker.enqueue(query)
-worker.destroy() // tears down the queue, then the pool
+await worker.destroy() // awaits queue cleanup, then pool cleanup, then emitter teardown
 ```
 
 CPU-parallel jobs over `node:worker_threads`:
@@ -55,6 +55,7 @@ const worker = createNodeWorker({
 })
 
 const doubled = await worker.enqueue(21) // 42, computed on a worker thread
+await worker.destroy()
 ```
 
 ## Guide

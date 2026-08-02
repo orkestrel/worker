@@ -1,4 +1,7 @@
 import type { EmitterInterface, EventMap } from '@orkestrel/emitter'
+import type { PoolOptions } from '@orkestrel/pool'
+import type { QueueStoreInterface, StoredEntry } from '@orkestrel/queue'
+import { afterEach } from 'vitest'
 
 // ── Environment-agnostic base setup (AGENTS §16.1) ────────────────────────────
 //
@@ -33,13 +36,52 @@ export interface TestGateInterface<T> {
  * @returns A gate exposing its `promise` and its `resolve` / `reject`
  */
 export function createGate<T = void>(): TestGateInterface<T> {
-	let resolve: (value: T) => void = () => {}
-	let reject: (error: unknown) => void = () => {}
-	const promise = new Promise<T>((res, rej) => {
-		resolve = res
-		reject = rej
-	})
-	return { promise, resolve, reject }
+	return Promise.withResolvers<T>()
+}
+
+/** Optional protocol hooks for {@link TestQueueStore}. */
+export interface TestQueueStoreHooks<TInput> {
+	readonly save?: (entry: StoredEntry<TInput>) => Promise<void> | void
+	readonly remove?: (id: string) => Promise<void> | void
+	readonly clear?: () => Promise<void> | void
+}
+
+/**
+ * A protocol-faithful in-memory {@link QueueStoreInterface} with optional operation hooks.
+ *
+ * @remarks
+ * The hooks expose external store timing and failures without reproducing Queue behavior.
+ * Successful operations update one real in-memory record map using the same save / remove /
+ * load / clear contract as a production store.
+ *
+ * @typeParam TInput - Input carried by each outstanding stored entry
+ */
+export class TestQueueStore<TInput> implements QueueStoreInterface<TInput> {
+	readonly #hooks: TestQueueStoreHooks<TInput>
+	readonly #entries = new Map<string, StoredEntry<TInput>>()
+
+	constructor(hooks: TestQueueStoreHooks<TInput> = {}) {
+		this.#hooks = hooks
+	}
+
+	async save(entry: StoredEntry<TInput>): Promise<void> {
+		await this.#hooks.save?.(entry)
+		this.#entries.set(entry.id, entry)
+	}
+
+	async remove(id: string): Promise<void> {
+		await this.#hooks.remove?.(id)
+		this.#entries.delete(id)
+	}
+
+	load(): Promise<readonly StoredEntry<TInput>[]> {
+		return Promise.resolve([...this.#entries.values()])
+	}
+
+	async clear(): Promise<void> {
+		await this.#hooks.clear?.()
+		this.#entries.clear()
+	}
 }
 
 // ── Call recorder (a real callback, not a mock) ──────────────────────────────
@@ -79,6 +121,95 @@ export function createRecorder<TArgs extends readonly unknown[]>(): TestRecorder
 		clear() {
 			calls.length = 0
 		},
+	}
+}
+
+/** A tracked-resource teardown registrar — see {@link createTeardown}. */
+export interface TeardownInterface<T> {
+	/** Register `item` for disposal at `afterEach`, returning it for inline use. */
+	track<U extends T>(item: U): U
+}
+
+/**
+ * Create a {@link TeardownInterface} that disposes every tracked item after each test.
+ *
+ * @remarks
+ * The registrar owns one `afterEach` barrier, runs every caller-supplied disposer, and
+ * reports one failure by identity or several in an ordered `AggregateError`. It is
+ * host-independent: the caller decides whether disposal means destroying an entity,
+ * terminating a thread, or cleaning a temporary resource.
+ *
+ * @typeParam T - The kind of item tracked
+ * @param dispose - How to dispose one tracked item; asynchronous cleanup is awaited
+ * @returns A registrar whose `track` enrolls an item and returns it
+ */
+export function createTeardown<T>(
+	dispose: (item: T) => void | Promise<void>,
+): TeardownInterface<T> {
+	const tracked: T[] = []
+	afterEach(async () => {
+		const tasks = tracked.splice(0).map((item) => Promise.resolve().then(() => dispose(item)))
+		const settlements = await Promise.allSettled(tasks)
+		const failures: unknown[] = []
+		for (const settlement of settlements) {
+			if (settlement.status === 'rejected') failures.push(settlement.reason)
+		}
+		if (failures.length === 1) throw failures[0]
+		if (failures.length > 1) throw new AggregateError(failures, 'test teardown failed')
+	})
+	return {
+		track(item) {
+			tracked.push(item)
+			return item
+		},
+	}
+}
+
+/** Getter-backed pool options whose prototype property reads are recorded. */
+export class PoolOptionsProbe<T> implements PoolOptions<T> {
+	#values: Required<PoolOptions<T>>
+	readonly #reads: TestRecorderInterface<readonly [property: keyof PoolOptions<T>]>
+
+	constructor(
+		values: Required<PoolOptions<T>>,
+		reads: TestRecorderInterface<readonly [property: keyof PoolOptions<T>]>,
+	) {
+		this.#values = values
+		this.#reads = reads
+	}
+
+	get max(): Required<PoolOptions<T>>['max'] {
+		this.#reads.handler('max')
+		return this.#values.max
+	}
+
+	get on(): Required<PoolOptions<T>>['on'] {
+		this.#reads.handler('on')
+		return this.#values.on
+	}
+
+	get error(): Required<PoolOptions<T>>['error'] {
+		this.#reads.handler('error')
+		return this.#values.error
+	}
+
+	get create(): Required<PoolOptions<T>>['create'] {
+		this.#reads.handler('create')
+		return this.#values.create
+	}
+
+	get destroy(): Required<PoolOptions<T>>['destroy'] {
+		this.#reads.handler('destroy')
+		return this.#values.destroy
+	}
+
+	get validate(): Required<PoolOptions<T>>['validate'] {
+		this.#reads.handler('validate')
+		return this.#values.validate
+	}
+
+	replace(values: Required<PoolOptions<T>>): void {
+		this.#values = values
 	}
 }
 

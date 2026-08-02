@@ -5,16 +5,16 @@ import { Worker as ThreadWorker } from 'node:worker_threads'
  * Internal mutable implementation of the readonly {@link NodeThread} observation contract.
  *
  * @remarks
- * Liveness and the first terminal error live behind runtime-private fields. Consumers observe
- * their current values through readonly getters, while the worker lifecycle records transitions
- * through bound instance methods without exposing writable contract properties.
+ * Liveness and the first terminal error live behind runtime-private fields. Thread `error`,
+ * `messageerror`, and `exit` all latch death, so pool validation cannot reuse a thread whose
+ * inbound message could not be deserialized.
  */
 export class Thread implements NodeThread {
 	readonly #worker: ThreadWorker
 	readonly #promise: Promise<NodeThread>
 	readonly #resolve: (value: NodeThread | PromiseLike<NodeThread>) => void
 	readonly #reject: (reason?: unknown) => void
-	readonly #recordErrorHandler: (error: Error) => void
+	readonly #recordHandler: (error: Error) => void
 	readonly #recordExitHandler: (code: number) => void
 	readonly #onlineHandler: () => void
 	readonly #spawnErrorHandler: (error: Error) => void
@@ -30,13 +30,14 @@ export class Thread implements NodeThread {
 		this.#promise = readiness.promise
 		this.#resolve = readiness.resolve
 		this.#reject = readiness.reject
-		this.#recordErrorHandler = this.#recordError.bind(this)
+		this.#recordHandler = this.#record.bind(this)
 		this.#recordExitHandler = this.#recordExit.bind(this)
 		this.#onlineHandler = this.#online.bind(this)
 		this.#spawnErrorHandler = this.#spawnError.bind(this)
 		this.#spawnExitHandler = this.#spawnExit.bind(this)
 
-		this.#worker.on('error', this.#recordErrorHandler)
+		this.#worker.on('error', this.#recordHandler)
+		this.#worker.on('messageerror', this.#recordHandler)
 		this.#worker.on('exit', this.#recordExitHandler)
 		this.#worker.once('online', this.#onlineHandler)
 		this.#worker.once('error', this.#spawnErrorHandler)
@@ -63,7 +64,7 @@ export class Thread implements NodeThread {
 		this.#alive = false
 	}
 
-	#recordError(error: Error): void {
+	#record(error: Error): void {
 		this.#alive = false
 		if (this.#death === undefined) this.#death = error
 	}

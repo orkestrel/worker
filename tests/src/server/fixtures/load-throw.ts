@@ -1,4 +1,4 @@
-// @ts-nocheck — a real worker-thread script (see double.ts). THROWS AT MODULE LOAD, before
+// A real worker-thread script that throws at module load, before
 // it ever registers a handler with `serveWorker`. A worker thread fires `'online'` as its
 // bootstrap completes and only THEN surfaces a module-evaluation throw as an `'error'` +
 // `'exit'` — so `spawnThread` resolves a live thread that immediately dies. The death reaches

@@ -26,8 +26,8 @@ import { NodeWorker } from './NodeWorker.js'
  *
  * @example
  * ```ts
- * import { stringShape } from '@src/core'
- * import { createJSONQueueStore } from '@src/server'
+ * import { stringShape } from '@orkestrel/contract'
+ * import { createJSONQueueStore } from '@orkestrel/worker/server'
  *
  * const store = createJSONQueueStore('data/queue.json', stringShape())
  * await store.save({ id: 'job-1', input: 'https://example.com', attempts: 0 })
@@ -71,7 +71,7 @@ export function createJSONQueueStore<TInput extends ContractShape>(
  *
  * @example
  * ```ts
- * import { createNodeWorker } from '@src/server'
+ * import { createNodeWorker } from '@orkestrel/worker/server'
  *
  * const worker = createNodeWorker({
  * 	script: new URL('./double.js', import.meta.url),
@@ -81,7 +81,7 @@ export function createJSONQueueStore<TInput extends ContractShape>(
  * })
  *
  * const doubled = await worker.enqueue(21) // 42, computed on a worker thread
- * worker.destroy() // terminates every thread
+ * await worker.destroy() // terminates every thread
  * ```
  */
 export function createNodeWorker<TInput, TResult>(

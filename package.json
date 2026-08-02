@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/worker",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"description": "A typed, resource-backed job worker for the @orkestrel line — a Queue paired with a Pool over an execution seam, plus a node:worker_threads server surface for CPU-parallel jobs. Part of the @orkestrel line.",
 	"keywords": [
 		"async",
@@ -77,22 +77,22 @@
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run build && npm test"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.8",
-		"@orkestrel/database": "^0.0.6",
-		"@orkestrel/emitter": "^0.0.4",
-		"@orkestrel/pool": "^0.0.4",
-		"@orkestrel/queue": "^0.0.4"
+		"@orkestrel/contract": "^0.0.9",
+		"@orkestrel/database": "^0.0.7",
+		"@orkestrel/emitter": "^0.0.5",
+		"@orkestrel/pool": "^0.0.6",
+		"@orkestrel/queue": "^0.0.7"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.58.12",
-		"@orkestrel/guide": "^0.0.7",
-		"@orkestrel/scaffold": "^0.0.11",
+		"@orkestrel/guide": "^0.0.8",
+		"@orkestrel/scaffold": "^0.0.16",
 		"@types/node": "^26.1.2",
 		"@vitest/browser-playwright": "^4.1.10",
 		"oxfmt": "^0.61.0",
 		"oxlint": "^1.76.0",
 		"typescript": "^6.0.3",
-		"vite": "^8.1.5",
+		"vite": "^8.2.0",
 		"vite-plugin-dts": "^5.0.3",
 		"vitest": "^4.1.10"
 	},

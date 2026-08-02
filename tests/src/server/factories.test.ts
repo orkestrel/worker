@@ -1,7 +1,20 @@
+import type { NodeWorkerOptions } from '@src/server'
 import { describe, expect, it } from 'vitest'
-import { integerShape, objectShape, stringShape } from '@orkestrel/contract'
+import {
+	integerShape,
+	isBoolean,
+	isNumber,
+	isRecord,
+	literalOf,
+	numberShape,
+	objectShape,
+	recordOf,
+	stringShape,
+} from '@orkestrel/contract'
+import { createMemoryQueueStore } from '@orkestrel/queue'
 import { createJSONQueueStore, createNodeWorker } from '@src/server'
-import { createTeardown, tempDatabasePath } from '../../setupServer.js'
+import { createRecorder, createTeardown } from '../../setup.js'
+import { NodeWorkerOptionsProbe, tempDatabasePath } from '../../setupServer.js'
 
 // src/server/factories.ts — createJSONQueueStore over a real JSON file (node
 // env, no mocks). Durability is the JSONDriver's job and the store engine is shared, so
@@ -11,7 +24,6 @@ import { createTeardown, tempDatabasePath } from '../../setupServer.js'
 // Track each temp-dir `cleanup` thunk so it runs in afterEach even when an assertion throws — the
 // shared §16.1 teardown registrar (the disposer just invokes the cleanup thunk).
 const { track } = createTeardown((cleanup: () => void) => cleanup())
-
 describe('createJSONQueueStore', () => {
 	it('persists outstanding entries across store instances over the same file', async () => {
 		const { path, cleanup } = tempDatabasePath()
@@ -69,7 +81,6 @@ describe('createJSONQueueStore', () => {
 
 describe('createNodeWorker', () => {
 	it('round-trips a job over a real worker thread, then tears down', async () => {
-		const isNumber = (value: unknown): value is number => typeof value === 'number'
 		const worker = createNodeWorker({
 			script: new URL('./fixtures/double.ts', import.meta.url),
 			input: isNumber,
@@ -78,7 +89,57 @@ describe('createNodeWorker', () => {
 		try {
 			await expect(worker.enqueue(21)).resolves.toBe(42)
 		} finally {
-			worker.destroy()
+			await worker.destroy()
+		}
+	})
+
+	it('captures every option once and retains the snapshot across jobs', async () => {
+		const reads =
+			createRecorder<
+				readonly [property: keyof NodeWorkerOptions<number, Readonly<Record<string, unknown>>>]
+			>()
+		const payload = { token: 'initial' }
+		const probe = new NodeWorkerOptionsProbe<number, Readonly<Record<string, unknown>>>(
+			{
+				script: new URL('./fixtures/echo-data.ts', import.meta.url),
+				input: isNumber,
+				result: isRecord,
+				workerData: payload,
+				concurrency: 1,
+				retries: 0,
+				timeout: 5_000,
+				store: createMemoryQueueStore(numberShape()),
+			},
+			reads,
+		)
+		const worker = createNodeWorker(probe)
+		try {
+			expect(reads.calls.map(([property]) => property)).toEqual([
+				'script',
+				'input',
+				'result',
+				'workerData',
+				'concurrency',
+				'retries',
+				'timeout',
+				'store',
+			])
+			probe.replace({
+				script: new URL('./fixtures/double.ts', import.meta.url),
+				input: literalOf(999),
+				result: recordOf({ changed: isBoolean }),
+				workerData: () => undefined,
+				concurrency: 2,
+				retries: 1,
+				timeout: 1,
+				store: createMemoryQueueStore(numberShape()),
+			})
+
+			await expect(worker.enqueue(1)).resolves.toEqual(payload)
+			await expect(worker.enqueue(2)).resolves.toEqual(payload)
+			expect(reads.count).toBe(8)
+		} finally {
+			await worker.destroy()
 		}
 	})
 })

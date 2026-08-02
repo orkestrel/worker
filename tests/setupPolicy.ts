@@ -109,6 +109,32 @@ export function normalizePolicyPath(path: string): string {
 	return path.replaceAll('\\', '/').replace(/\/+/gu, '/')
 }
 
+/** Inspect TSDoc blocks for private source-alias imports that consumers cannot resolve. */
+export function inspectTSDocAliases(path: string, content: string): readonly string[] {
+	const violations: string[] = []
+	const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true)
+	const scanner = ts.createScanner(
+		ts.ScriptTarget.Latest,
+		false,
+		ts.LanguageVariant.Standard,
+		content,
+	)
+	let token = scanner.scan()
+	while (token !== ts.SyntaxKind.EndOfFileToken) {
+		if (token === ts.SyntaxKind.MultiLineCommentTrivia) {
+			const comment = scanner.getTokenText()
+			if (comment.startsWith('/**') && /(?:\bfrom\s+|\bimport\s*)['"]@src\//u.test(comment)) {
+				const position = source.getLineAndCharacterOfPosition(scanner.getTokenStart())
+				violations.push(
+					`${path}:${String(position.line + 1)}:${String(position.character + 1)} forbids private @src/* imports in TSDoc examples`,
+				)
+			}
+		}
+		token = scanner.scan()
+	}
+	return violations
+}
+
 /** Whether a declaration carries an explicit export modifier. */
 export function hasExportModifier(node: ts.Node): boolean {
 	return (
@@ -240,7 +266,7 @@ export function isSelfContained(source: ts.SourceFile): boolean {
 			const clause = statement.importClause
 			const named = clause?.namedBindings
 			const erased =
-				clause?.isTypeOnly === true ||
+				clause?.phaseModifier === ts.SyntaxKind.TypeKeyword ||
 				(clause !== undefined &&
 					clause.name === undefined &&
 					named !== undefined &&
@@ -248,8 +274,9 @@ export function isSelfContained(source: ts.SourceFile): boolean {
 					named.elements.length > 0 &&
 					named.elements.every((element) => element.isTypeOnly))
 			if (erased) continue
-			if (!ts.isStringLiteral(statement.moduleSpecifier)) return false
-			const specifier = statement.moduleSpecifier.text
+			const moduleSpecifier = statement.moduleSpecifier
+			if (!ts.isStringLiteral(moduleSpecifier)) return false
+			const specifier = moduleSpecifier.text
 			if (!specifier.startsWith('node:') || !isBuiltin(specifier)) return false
 			builtin = true
 		}
@@ -492,6 +519,7 @@ export function inspectCodingNode(
 /** Inspect one TypeScript source module for repository coding-law violations. */
 export function inspectCodingLaw(path: string, content: string): readonly string[] {
 	const violations: string[] = []
+	violations.push(...inspectTSDocAliases(path, content))
 	const program = createPolicyProgram(path, content)
 	const source = program.getSourceFile(path)
 	if (source === undefined) throw new Error(`Policy source was not bound at ${path}`)

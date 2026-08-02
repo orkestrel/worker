@@ -400,7 +400,11 @@ export function outputBoundary(output: string): Plugin {
 					'[orkestrel-output-boundary] Public directories are disabled; every output must come from the audited graph',
 				)
 			}
-			if (output.endsWith('/browser') && config.build.assetsInlineLimit !== 0) {
+			if (
+				output.endsWith('/browser') &&
+				config.build.lib === false &&
+				config.build.assetsInlineLimit !== 0
+			) {
 				throw new Error(
 					'[orkestrel-output-boundary] Browser assets must remain external for output auditing',
 				)
@@ -576,7 +580,7 @@ export function environmentBoundary(
 							? packageRootForResolved(physicalResolution)
 							: undefined
 					if (mappedPackageRoot === undefined) {
-						this.error(
+						return this.error(
 							'Dependency package imports must resolve inside an exact physical package root',
 						)
 					}
@@ -595,7 +599,7 @@ export function environmentBoundary(
 				const packageRoot =
 					packageName === undefined ? undefined : packageRootOf(packageName, physicalResolution)
 				if (packageRoot === undefined || !containedPath(packageRoot, physicalResolution)) {
-					this.error('Resolved dependencies must remain inside their physical package root')
+					return this.error('Resolved dependencies must remain inside their physical package root')
 				}
 				trustedPackageRoots.add(packageRoot)
 			}
@@ -626,7 +630,7 @@ export function environmentBoundary(
 			}
 			const code = readBoundedFile(physicalImporter, ENVIRONMENT_MODULE_BYTES)
 			if (code === undefined) {
-				this.error('Dependency module source must be a bounded regular file')
+				return this.error('Dependency module source must be a bounded regular file')
 			}
 			for (const source of await environmentAssetSources(code, id)) {
 				const normalizedSource = source.replaceAll('\\', '/')
@@ -823,6 +827,9 @@ export const srcServer = (config?: UserConfig): UserConfig =>
 					include: ['tests/src/server/**/*.test.ts'],
 					exclude: ['tests/src/core/**/*.test.ts'],
 					setupFiles: ['./tests/setup.ts', './tests/setupServer.ts'],
+					execArgv: /^(?:22\.1[2-7]|23\.[0-5])\./u.test(process.versions.node)
+						? ['--experimental-strip-types']
+						: [],
 				},
 			},
 			config ?? {},

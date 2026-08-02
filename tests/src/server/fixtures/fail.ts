@@ -1,9 +1,9 @@
-// @ts-nocheck — a real worker-thread script (see double.ts).
+// A real worker-thread script.
 import { serveWorker } from '../../../../src/server/serve.ts'
 
 // Always throws — proves a handler rejection surfaces as an error reply (and retries).
 serveWorker({
-	input: (value) => typeof value === 'number',
+	input: (value: unknown): value is number => typeof value === 'number',
 	handler: (value) => {
 		throw new Error(`boom:${value}`)
 	},

@@ -1,6 +1,8 @@
 import type { QueueExecution } from '@orkestrel/queue'
-import type { Guard, NodeThread } from './types.js'
+import type { Guard } from '@orkestrel/contract'
+import type { NodeThread } from './types.js'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
+import { attempt, isRecord } from '@orkestrel/contract'
 import { Thread } from './Thread.js'
 import { isReply } from './validators.js'
 
@@ -8,9 +10,10 @@ import { isReply } from './validators.js'
  * Internal lifecycle entity for one dispatched worker-thread job.
  *
  * @remarks
- * Owns the stable listener identities, settlement guard, cleanup, result narrowing, and abort
- * eviction for one dispatch. The public {@link dispatch} helper constructs this entity and returns
- * its promise.
+ * Owns stable `message` / `messageerror` / death listener identities, settlement, result-guard
+ * containment, and abort eviction for one dispatch. Deserialization failure, a matching-id
+ * malformed reply, and abort each evict and terminate the thread before rejecting, with
+ * termination failure preserved. Non-record, id-less, hostile-id, and foreign-id chatter is ignored.
  */
 export class Dispatch<TResult> {
 	readonly #thread: NodeThread
@@ -23,6 +26,7 @@ export class Dispatch<TResult> {
 	readonly #fulfill: (value: TResult | PromiseLike<TResult>) => void
 	readonly #reject: (reason?: unknown) => void
 	readonly #messageHandler: (value: unknown) => void
+	readonly #messageErrorHandler: (error: Error) => void
 	readonly #errorHandler: (error: Error) => void
 	readonly #exitHandler: () => void
 	readonly #abortHandler: () => void
@@ -44,6 +48,7 @@ export class Dispatch<TResult> {
 		this.#fulfill = settlement.resolve
 		this.#reject = settlement.reject
 		this.#messageHandler = this.#message.bind(this)
+		this.#messageErrorHandler = this.#messageError.bind(this)
 		this.#errorHandler = this.#error.bind(this)
 		this.#exitHandler = this.#exit.bind(this)
 		this.#abortHandler = this.#abort.bind(this)
@@ -60,6 +65,7 @@ export class Dispatch<TResult> {
 			return
 		}
 		this.#worker.on('message', this.#messageHandler)
+		this.#worker.on('messageerror', this.#messageErrorHandler)
 		this.#worker.on('error', this.#errorHandler)
 		this.#worker.on('exit', this.#exitHandler)
 		if (this.#execution.signal.aborted) {
@@ -75,14 +81,28 @@ export class Dispatch<TResult> {
 	}
 
 	#message(value: unknown): void {
-		if (!isReply(value, this.#id)) return
+		if (!isRecord(value)) return
+		const id = attempt(() => value.id)
+		if (!id.success || id.value !== this.#id) return
+		if (!isReply(value, this.#id)) {
+			this.#terminate(new Error('worker reply was malformed'))
+			return
+		}
 		if (value.ok) {
 			const reply = value.value
-			if (this.#result(reply)) this.#succeed(reply)
-			else this.#fail(new Error('reply did not satisfy result guard'))
+			try {
+				if (this.#result(reply)) this.#succeed(reply)
+				else this.#fail(new Error('reply did not satisfy result guard'))
+			} catch (error: unknown) {
+				this.#fail(error)
+			}
 			return
 		}
 		this.#fail(new Error(value.error))
+	}
+
+	#messageError(error: Error): void {
+		this.#terminate(error)
 	}
 
 	#error(error: Error): void {
@@ -90,14 +110,45 @@ export class Dispatch<TResult> {
 	}
 
 	#exit(): void {
-		this.#fail(new Error('worker thread exited'))
+		this.#fail(this.#thread.death ?? new Error('worker thread exited'))
 	}
 
 	#abort(): void {
-		this.#worker.postMessage({ id: this.#id, command: 'abort' })
+		const notification: unknown[] = []
+		try {
+			this.#worker.postMessage({ id: this.#id, command: 'abort' })
+		} catch (cause: unknown) {
+			notification.push(cause)
+		}
+		this.#terminate(this.#execution.signal.reason, notification)
+	}
+
+	#terminate(error: unknown, notification: readonly unknown[] = []): void {
+		if (this.#settled) return
+		this.#settled = true
+		this.#detach()
 		if (this.#thread instanceof Thread) this.#thread.evict()
-		void this.#worker.terminate()
-		this.#fail(new Error('job aborted'))
+		let termination: Promise<number>
+		try {
+			termination = this.#worker.terminate()
+		} catch (cause: unknown) {
+			this.#reject(new AggregateError([error, ...notification, cause], 'worker termination failed'))
+			return
+		}
+		void termination.then(
+			() => {
+				if (notification.length === 0) this.#reject(error)
+				else {
+					this.#reject(
+						new AggregateError([error, ...notification], 'worker abort notification failed'),
+					)
+				}
+			},
+			(cause: unknown) =>
+				this.#reject(
+					new AggregateError([error, ...notification, cause], 'worker termination failed'),
+				),
+		)
 	}
 
 	#succeed(value: TResult): void {
@@ -116,6 +167,7 @@ export class Dispatch<TResult> {
 
 	#detach(): void {
 		this.#worker.off('message', this.#messageHandler)
+		this.#worker.off('messageerror', this.#messageErrorHandler)
 		this.#worker.off('error', this.#errorHandler)
 		this.#worker.off('exit', this.#exitHandler)
 		this.#execution.signal.removeEventListener('abort', this.#abortHandler)

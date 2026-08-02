@@ -1,5 +1,6 @@
 import type { QueueExecution } from '@orkestrel/queue'
-import type { Guard, NodeThread } from './types.js'
+import type { Guard } from '@orkestrel/contract'
+import type { NodeThread } from './types.js'
 import { Dispatch } from './Dispatch.js'
 import { Thread } from './Thread.js'
 
@@ -22,11 +23,11 @@ import { Thread } from './Thread.js'
  * listeners that flip `alive` to `false` AND latch the first terminal event on
  * {@link NodeThread.death}: a crash is observable to an in-flight {@link dispatch} (via
  * its own listeners), to the pool's `validate` (via `alive`), and — crucially — to a
- * dispatch that attaches AFTER the death (via the latch). The latch closes a real race:
- * under event-loop pressure a dead thread's `online` + `error` + `exit` are delivered in
- * ONE synchronous exit-drain batch, so every death event fires before the microtask chain
- * resolving this spawn can hand the thread to `dispatch` — without the latch that job
- * would await events that already fired, forever. The pool's `create` hook calls this.
+ * dispatch that attaches AFTER the death (via the latch). A `messageerror` is terminal too,
+ * so a thread whose inbound payload could not be deserialized is never reused. The latch
+ * closes a real race: a thread can become terminal before the readiness promise continuation
+ * hands it to `dispatch`, leaving no future death event for that dispatch to observe. Without
+ * the latch, that job would wait forever. The pool's `create` hook calls this.
  *
  * @param script - The worker module each thread runs (must call `serveWorker`)
  * @param workerData - Opaque, structured-cloneable data handed to the thread at spawn
@@ -44,15 +45,15 @@ export function spawnThread(script: string | URL, workerData: unknown): Promise<
  * that id: a success `value` is narrowed through `result` (a value that fails the guard
  * rejects — the zero-`as` type bridge), a failure rejects with the thread's error string.
  * A thread that ALREADY died rejects synchronously at entry from the latched
- * {@link NodeThread.death} — its death events fired before this dispatch existed (under
- * load they arrive in one batched exit drain) and will never fire again, so waiting on
- * the listeners below would dangle forever; the latch makes the death total across every
- * event ordering. If the thread `error`s / `exit`s mid-flight it is marked dead and the
- * job rejects. On `execution.signal` abort it posts an `abort` envelope (cooperative) AND
- * evicts the thread — `alive = false` + `terminate()` — because CPU-bound work cannot
- * honour the signal; the freed pool slot then gets a fresh thread. Every listener (the
- * thread's `message` / `error` / `exit` and the signal's `abort`) is removed on settle,
- * and a `settled` guard prevents a double-settle.
+ * {@link NodeThread.death} — its death events fired before this dispatch existed and will
+ * never fire again, so waiting on the listeners below would dangle forever; the latch makes
+ * death total across every event ordering. If the thread `error`s / `exit`s mid-flight it is
+ * marked dead and the
+ * job rejects. An inbound `messageerror` also evicts and terminates the thread before
+ * rejection. On `execution.signal` abort it contains the cooperative `abort` post,
+ * evicts the thread, and observes `terminate()` settlement because CPU-bound work cannot
+ * honour the signal; the freed pool slot then gets a fresh thread. Every per-job listener
+ * (`message` / `messageerror` / `error` / `exit` / `abort`) is removed on settle.
  *
  * @typeParam TResult - The reply type the `result` guard narrows to
  * @param thread - The leased thread to run the job on

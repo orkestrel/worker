@@ -31,7 +31,7 @@ export type WorkerEventMap<TResult> = {
 	readonly success: readonly [id: string, result: TResult]
 	/** A job settled with a terminal failure — its id + the error. */
 	readonly failure: readonly [id: string, error: unknown]
-	/** The worker was aborted — the cancel reason. */
+	/** The worker was aborted — the queue's coded abort error retaining the caller reason. */
 	readonly abort: readonly [reason: unknown]
 	/** The worker went idle — no pending jobs and none in flight. */
 	readonly drain: readonly []
@@ -52,7 +52,8 @@ export type WorkerHandler<TInput, TResource, TResult> = (
  *   retry while attempts remain (delegated to the underlying queue).
  * - `pool` — the {@link PoolOptions} for the resource the handler runs against; its
  *   `max` defaults to `concurrency` so resources match the jobs in flight.
- * - `concurrency` — the maximum jobs in flight at once; defaults to `1`. Floored at `1`.
+ * - `concurrency` — the maximum jobs in flight at once; defaults to `1` and must be a
+ *   positive safe integer, as validated by the underlying queue.
  * - `retries` — the default extra attempts per job on failure; defaults to `0`.
  * - `timeout` — the default per-attempt deadline in milliseconds; defaults to none.
  * - `store` — durable backing; outstanding entries survive a restart; call
@@ -69,6 +70,7 @@ export interface WorkerOptions<TInput, TResource, TResult> {
 	readonly pool: PoolOptions<TResource>
 	readonly concurrency?: number
 	readonly retries?: number
+	/** Integer milliseconds in `0..2_147_483_647`; `0` disables the per-attempt deadline. */
 	readonly timeout?: number
 	readonly store?: QueueStoreInterface<TInput>
 }
@@ -93,10 +95,24 @@ export interface WorkerInterface<TInput, TResult> {
 	/** Re-enqueue outstanding entries loaded from the store; no-op without a store. */
 	restore(): Promise<void>
 	start(): void
-	stop(): void
+	/** Stop the queue and await current-loop and durable cleanup quiescence. */
+	stop(): Promise<void>
 	pause(): void
 	resume(): void
-	abort(reason?: unknown): void
-	clear(): void
-	destroy(): void
+	/**
+	 * Cancel in-flight work, reject pending work, and await queue-owned cleanup.
+	 *
+	 * @param reason - Optional cause retained by the queue's coded abort error
+	 * @returns The underlying queue's stable abort barrier
+	 */
+	abort(reason?: unknown): Promise<void>
+	/** Drop pending work and await its durable cleanup. */
+	clear(): Promise<void>
+	/**
+	 * Tear down the queue, then the pool, and finally the worker emitter.
+	 *
+	 * @returns One stable barrier shared by every call; it rejects with the original sole
+	 *   cleanup failure or an ordered `AggregateError` when both queue and pool fail
+	 */
+	destroy(): Promise<void>
 }

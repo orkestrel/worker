@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { arrayOf, isNumber, isRecord, unionOf } from '@orkestrel/contract'
 import { fileURLToPath } from 'node:url'
 import { createNodeWorker, dispatch, spawnThread } from '@src/server'
-import { waitForDelay } from '../../setup.js'
-import { createTeardown } from '../../setupServer.js'
+import { createTeardown, waitForDelay } from '../../setup.js'
 
 // src/server/helpers.ts — the main-side worker-thread machinery (`spawnThread` /
 // `dispatch`) `createNodeWorker` composes over. The round-trip suites below
@@ -10,17 +10,28 @@ import { createTeardown } from '../../setupServer.js'
 // project), exercising `spawnThread` + `dispatch` END TO END — each stands up a worker
 // against a real fixture script, drives
 // jobs, and tears it down in `afterEach` so no thread leaks and the process exits; the
-// fixtures are raw `.ts` loaded by Node's type-stripping (Node ≥ 23.6), paths resolved from
-// this file's URL.
+// fixtures are raw `.ts` loaded by Node's type-stripping; the server Vitest project supplies
+// the required flag on Node 22.12–22.17 and Node 23.0–23.5. Paths resolve from this file's URL.
 
-// A `number` guard reused as both the input and result narrower (the zero-`as` bridge).
-const isNumber = (value: unknown): value is number => typeof value === 'number'
+const isEven = (value: unknown): value is number => isNumber(value) && value % 2 === 0
+const isThrowingInput = (value: unknown): value is number => {
+	if (value === 1) throw new Error('input-guard-boom')
+	return isNumber(value)
+}
+const isThrowingResult = (value: unknown): value is number => {
+	if (value === 2) throw new Error('result-guard-boom')
+	return isNumber(value)
+}
+const isWorkerPayload = (value: unknown): value is { readonly token: string } => {
+	return isRecord(value) && typeof value.token === 'string'
+}
+const isNumberArray = arrayOf(isNumber)
 
 // The fixtures directory, resolved from this test's URL so the runner's cwd never matters.
 const fixture = (name: string): URL => new URL(`./fixtures/${name}`, import.meta.url)
 
 // Track every worker so it is destroyed even when an assertion throws.
-const { track } = createTeardown((worker: { destroy(): void }) => worker.destroy())
+const { track } = createTeardown((worker: { destroy(): Promise<void> }) => worker.destroy())
 
 describe('createNodeWorker — round-trip over a thread', () => {
 	it('dispatches the input to a thread and resolves the narrowed reply', async () => {
@@ -212,18 +223,57 @@ describe('createNodeWorker — result-guard violation', () => {
 		// The fixture replies with a string; the number `result` guard rejects it.
 		await expect(worker.enqueue(3)).rejects.toThrow('reply did not satisfy result guard')
 	})
+
+	it('contains a throwing result guard and keeps the worker usable', async () => {
+		const worker = track(
+			createNodeWorker({
+				script: fixture('double.ts'),
+				input: isNumber,
+				result: isThrowingResult,
+				concurrency: 1,
+			}),
+		)
+		await expect(worker.enqueue(1)).rejects.toThrow('result-guard-boom')
+		await expect(worker.enqueue(2)).resolves.toBe(4)
+	})
 })
 
 describe('createNodeWorker — input-guard fail-fast', () => {
 	it('rejects a bad input before it crosses the boundary', async () => {
-		const onlyEven = (value: unknown): value is number =>
-			typeof value === 'number' && value % 2 === 0
 		const worker = track(
-			createNodeWorker({ script: fixture('double.ts'), input: onlyEven, result: isNumber }),
+			createNodeWorker({ script: fixture('double.ts'), input: isEven, result: isNumber }),
 		)
 		await expect(worker.enqueue(3)).rejects.toThrow('input did not satisfy input guard')
 		// A valid input still works on the same worker.
 		await expect(worker.enqueue(4)).resolves.toBe(8)
+	})
+
+	it('contains a throwing input guard and keeps the worker usable', async () => {
+		const worker = track(
+			createNodeWorker({
+				script: fixture('double.ts'),
+				input: isThrowingInput,
+				result: isNumber,
+				concurrency: 1,
+			}),
+		)
+		await expect(worker.enqueue(1)).rejects.toThrow('input-guard-boom')
+		await expect(worker.enqueue(2)).resolves.toBe(4)
+	})
+})
+
+describe('createNodeWorker — non-cloneable result', () => {
+	it('rejects the failed clone and serves a later job on the same concurrency-1 worker', async () => {
+		const worker = track(
+			createNodeWorker({
+				script: fixture('noncloneable-result.ts'),
+				input: isNumber,
+				result: isNumber,
+				concurrency: 1,
+			}),
+		)
+		await expect(worker.enqueue(-1)).rejects.toThrow(/clone/i)
+		await expect(worker.enqueue(5)).resolves.toBe(10)
 	})
 })
 
@@ -231,17 +281,17 @@ describe('createNodeWorker — non-cloneable input', () => {
 	it('rejects (and does not leak) when the input cannot be structured-cloned', async () => {
 		// A guard that admits any object, so the value crosses to `postMessage` — where a
 		// function property fails the structured clone. The job must reject cleanly.
-		const isObject = (value: unknown): value is { fn: () => void } =>
-			typeof value === 'object' && value !== null
 		const worker = track(
-			createNodeWorker({ script: fixture('double.ts'), input: isObject, result: isNumber }),
+			createNodeWorker({
+				script: fixture('double.ts'),
+				input: unionOf(isRecord, isNumber),
+				result: isNumber,
+				concurrency: 1,
+			}),
 		)
 		await expect(worker.enqueue({ fn: () => undefined })).rejects.toThrow(/clone/i)
 		// A later valid number still works — the worker is not wedged.
-		const ok = track(
-			createNodeWorker({ script: fixture('double.ts'), input: isNumber, result: isNumber }),
-		)
-		await expect(ok.enqueue(5)).resolves.toBe(10)
+		await expect(worker.enqueue(5)).resolves.toBe(10)
 	})
 })
 
@@ -286,16 +336,11 @@ describe('createNodeWorker — workerData reaches the worker side', () => {
 		// `echo-data.ts` replies with the `workerData` cloned to it at spawn. A nested object
 		// round-trips through the structured clone; the `result` guard narrows the echoed shape.
 		const payload = { token: 'abc', limits: { max: 7, names: ['a', 'b'] } }
-		const isPayload = (value: unknown): value is typeof payload => {
-			if (typeof value !== 'object' || value === null || !('token' in value)) return false
-			const token: unknown = value.token
-			return typeof token === 'string'
-		}
 		const worker = track(
 			createNodeWorker({
 				script: fixture('echo-data.ts'),
 				input: isNumber,
-				result: isPayload,
+				result: isWorkerPayload,
 				workerData: payload,
 			}),
 		)
@@ -324,9 +369,8 @@ describe('createNodeWorker — large / deep payloads round-trip', () => {
 		// A 10k-element array sums on the thread; both the large input and the numeric result
 		// survive the structured clone intact (a stress on the clone path, not just a scalar).
 		const size = 10_000
-		const isArray = (value: unknown): value is number[] => Array.isArray(value)
 		const worker = track(
-			createNodeWorker({ script: fixture('sum.ts'), input: isArray, result: isNumber }),
+			createNodeWorker({ script: fixture('sum.ts'), input: isNumberArray, result: isNumber }),
 		)
 		const input = Array.from({ length: size }, (_unused, index) => index)
 		const expected = (size * (size - 1)) / 2
@@ -350,34 +394,12 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 		// same way — the job rejects rather than hanging on a reply that never comes. This was the
 		// suite's one residual flake (a hang under full-suite load, NOT slow bootstrap): the death
 		// events could all fire before `dispatch` attached its listeners, losing the signal. The
-		// `NodeThread.death` latch settles that ordering deterministically (the batched-drain spec
-		// below pins it), so the spec runs at the default timeout again.
+		// `NodeThread.death` latch settles that ordering deterministically (the direct post-death
+		// dispatch spec below pins the latch), so the spec runs at the default timeout again.
 		const worker = track(
 			createNodeWorker({ script: fixture('does-not-exist.ts'), input: isNumber, result: isNumber }),
 		)
 		await expect(worker.enqueue(1)).rejects.toBeDefined()
-	})
-
-	it('rejects even when the death events are batched behind a stalled event loop', async () => {
-		// The deterministic pin of the full-suite flake. Under load the main thread can stall
-		// long enough that the thread has ALREADY died by the time its events are processed —
-		// Node then delivers `online` + `error` + `exit` in ONE synchronous exit-drain batch, so
-		// every death event fires BEFORE `dispatch`'s microtask-queued listener attach (the
-		// microtask chain from `spawnThread`'s `online` resolve is starved until after `exit`).
-		// The stall below reproduces that interleaving on demand: enqueue, let one macrotask
-		// pass (the thread is constructed within the enqueue's microtask chain), then monopolise
-		// the loop until the thread is long dead. Without the `NodeThread.death` latch the
-		// dispatch would await events that already fired — forever; with it, the job rejects.
-		const worker = track(
-			createNodeWorker({ script: fixture('does-not-exist.ts'), input: isNumber, result: isNumber }),
-		)
-		const pending = worker.enqueue(1)
-		await waitForDelay(0)
-		const until = Date.now() + 500
-		while (Date.now() < until) {
-			// Monopolise the event loop so the thread's whole death is batched behind the stall.
-		}
-		await expect(pending).rejects.toBeDefined()
 	})
 
 	it('still serves a later job once a healthy script is used (pool recovers)', async () => {
@@ -415,17 +437,77 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 
 describe('dispatch — the latched-death path (post-death dispatch settles immediately)', () => {
 	it('rejects a dispatch onto a thread that already died, from the latched death', async () => {
-		// `load-throw.ts` comes online (so `spawnThread` resolves) then dies at module
-		// evaluation. Once the thread has died, EVERY death event has already fired — a
-		// dispatch attaching now could never observe one. The wait below is on the LATCH
-		// itself (not an `exit` listener, which under a batched drain could likewise attach
-		// too late) — once `death` is set, the dispatch must reject immediately with it.
-		const thread = await spawnThread(fixture('load-throw.ts'), undefined)
-		while (thread.death === undefined) await waitForDelay(5)
+		const thread = await spawnThread(fixture('double.ts'), undefined)
+		await thread.worker.terminate()
 		expect(thread.alive).toBe(false)
+		expect(thread.death).toBeDefined()
 		const controller = new AbortController()
 		const pending = dispatch(thread, 1, { id: 'post-death', signal: controller.signal }, isNumber)
 		await expect(pending).rejects.toBe(thread.death)
+	})
+})
+
+describe('dispatch — exact terminal causes', () => {
+	it('rejects with the exact caller abort reason object', async () => {
+		const thread = await spawnThread(fixture('slow.ts'), undefined)
+		try {
+			const controller = new AbortController()
+			const reason = Object.freeze({ command: 'stop', source: 'caller' })
+			const pending = dispatch(
+				thread,
+				5_000,
+				{ id: 'exact-abort', signal: controller.signal },
+				isNumber,
+			)
+			controller.abort(reason)
+			await expect(pending).rejects.toBe(reason)
+		} finally {
+			await thread.worker.terminate()
+		}
+	})
+
+	it('rejects a code-1 crash with the exact latched thread death', async () => {
+		const thread = await spawnThread(fixture('crash.ts'), undefined)
+		try {
+			const controller = new AbortController()
+			const pending = dispatch(
+				thread,
+				-1,
+				{ id: 'exact-crash', signal: controller.signal },
+				isNumber,
+			)
+			let failure: unknown
+			try {
+				await pending
+			} catch (error: unknown) {
+				failure = error
+			}
+			expect(failure).toBe(thread.death)
+			expect(thread.death?.message).toBe('worker thread exited (code 1)')
+		} finally {
+			await thread.worker.terminate()
+		}
+	})
+})
+
+describe('dispatch — messageerror listener lifecycle', () => {
+	it('attaches one stable listener for the job and removes it on settlement', async () => {
+		const thread = await spawnThread(fixture('double.ts'), undefined)
+		try {
+			const baseline = thread.worker.listenerCount('messageerror')
+			const controller = new AbortController()
+			const pending = dispatch(
+				thread,
+				2,
+				{ id: 'listener-lifecycle', signal: controller.signal },
+				isNumber,
+			)
+			expect(thread.worker.listenerCount('messageerror')).toBe(baseline + 1)
+			await expect(pending).resolves.toBe(4)
+			expect(thread.worker.listenerCount('messageerror')).toBe(baseline)
+		} finally {
+			await thread.worker.terminate()
+		}
 	})
 })
 
@@ -438,6 +520,22 @@ describe('createNodeWorker — protocol robustness (stray messages)', () => {
 			createNodeWorker({ script: fixture('stray.ts'), input: isNumber, result: isNumber }),
 		)
 		await expect(worker.enqueue(21)).resolves.toBe(42)
+	})
+})
+
+describe('createNodeWorker — protocol robustness (matching-id malformed reply)', () => {
+	it('rejects, evicts the tainted thread, and serves later work on a replacement', async () => {
+		const worker = track(
+			createNodeWorker({
+				script: fixture('malformed.ts'),
+				input: isNumber,
+				result: isNumber,
+				concurrency: 1,
+				timeout: 500,
+			}),
+		)
+		await expect(worker.enqueue(-1)).rejects.toThrow('worker reply was malformed')
+		await expect(worker.enqueue(21, { timeout: 5_000 })).resolves.toBe(42)
 	})
 })
 
@@ -465,18 +563,20 @@ describe('createNodeWorker — destroy with multiple threads mid-job', () => {
 		// Three uncooperative jobs spin in flight across a 3-thread pool; `destroy()` aborts the
 		// queue (rejecting them) AND tears the pool down, terminating all three threads. If any
 		// leaked, vitest would hang at exit — so this passing + the process exiting IS the proof.
-		const worker = createNodeWorker({
-			script: fixture('slow.ts'),
-			input: isNumber,
-			result: isNumber,
-			concurrency: 3,
-		})
+		const worker = track(
+			createNodeWorker({
+				script: fixture('slow.ts'),
+				input: isNumber,
+				result: isNumber,
+				concurrency: 3,
+			}),
+		)
 		const inflight = [5_000, 5_000, 5_000].map((input) =>
 			worker.enqueue(input).catch((error: unknown) => error),
 		)
 		await waitForDelay(20)
 		expect(worker.active).toBe(3)
-		worker.destroy()
+		await worker.destroy()
 		// Every in-flight job settles (rejected by the abort), so nothing dangles.
 		const settled = await Promise.all(inflight)
 		expect(settled).toHaveLength(3)
@@ -530,17 +630,19 @@ describe('createNodeWorker — rapid enqueue / abort churn through the pool', ()
 
 describe('createNodeWorker — destroy terminates every thread', () => {
 	it('tears down so the process can exit (no hanging threads)', async () => {
-		const worker = createNodeWorker({
-			script: fixture('double.ts'),
-			input: isNumber,
-			result: isNumber,
-			concurrency: 2,
-		})
+		const worker = track(
+			createNodeWorker({
+				script: fixture('double.ts'),
+				input: isNumber,
+				result: isNumber,
+				concurrency: 2,
+			}),
+		)
 		await worker.enqueue(2)
 		// destroy() must terminate the pooled threads; if any leaked, the test runner
 		// would hang at exit. A second destroy is idempotent.
-		worker.destroy()
-		worker.destroy()
+		await worker.destroy()
+		await worker.destroy()
 		expect(worker.stopped).toBe(true)
 	})
 })

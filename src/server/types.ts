@@ -1,22 +1,6 @@
+import type { Guard } from '@orkestrel/contract'
 import type { QueueStoreInterface } from '@orkestrel/queue'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
-
-/**
- * A runtime type predicate used to narrow a wire payload with no assertion.
- *
- * @remarks
- * Mirrors the core `Guard<T>` (a total `(value: unknown) => value is T` predicate,
- * AGENTS §14) but is re-declared here so the server workers surface is self-describing
- * and the worker-side `serve.ts` — which may not import from `@src/core` (it loads as
- * raw `.ts` inside a spawned thread) — shares the same vocabulary. A `Guard` NEVER
- * throws; adversarial input returns `false`. It is the zero-`as` bridge across the
- * structured-clone boundary: the main side narrows each reply value through the
- * `result` guard and the input through the `input` guard, so a generic `TInput` /
- * `TResult` is reconstructed by validation rather than asserted.
- *
- * @typeParam T - The type a value is narrowed to when the predicate holds
- */
-export type Guard<T> = (value: unknown) => value is T
 
 /**
  * A thread→main reply envelope — a success carrying an opaque `value`, or a failure with a
@@ -26,11 +10,11 @@ export type Guard<T> = (value: unknown) => value is T
  * @remarks
  * Internal plumbing rather than public call surface, but centralized here per AGENTS §5 (an
  * impl file holds only its class / functions). A reply is a discriminated union on `ok`: a
- * `true` carries any opaque `value` (narrowed at the boundary by the `result` {@link Guard},
+ * `true` carries any opaque `value` (narrowed at the boundary by the `result` guard,
  * with no `as`); a `false` carries a string `error`. The worker-side `serve.ts` cannot import
  * this (it loads as raw source in a spawned thread, AGENTS §5 exception) and posts the same
- * shape structurally. The `id` ties a reply to its job, so a stray / foreign-id message is
- * ignored.
+ * shape structurally. The `id` ties a reply to its job: id-less / foreign-id chatter is ignored,
+ * while a matching-id malformed envelope taints the thread and causes dispatch to terminate it.
  */
 export type Reply =
 	| { readonly id: string; readonly ok: true; readonly value: unknown }
@@ -41,16 +25,16 @@ export type Reply =
  * {@link createNodeWorker} leases per job.
  *
  * @remarks
- * `alive` starts `true` and flips to `false` the moment the thread `error`s, `exit`s, or
- * is evicted on abort; the pool's `validate` reads `alive && worker.threadId > 0`, so a
+ * `alive` starts `true` and flips to `false` when the thread `error`s, reports a
+ * `messageerror`, exits, or is evicted on abort; the pool's `validate` reads
+ * `alive && worker.threadId > 0`, so a
  * dead thread is destroyed and replaced rather than reused. `death` LATCHES the first
- * terminal event (`error`'s `Error`, or a synthesized one on `exit`) — the death-signal
+ * terminal event (`error` / `messageerror`, or a synthesized error on `exit`) — the death-signal
  * record a `dispatch` checks at entry, so a job dispatched AFTER the thread died (its
  * death events already fired and will never fire again) rejects immediately instead of
- * awaiting events that already happened. Under event-loop pressure Node delivers a dead
- * thread's `online` + `error` + `exit` in ONE synchronous exit-drain batch, starving the
- * microtask chain that attaches the dispatch listeners until after every death event —
- * the latch is what makes that ordering safe. `worker` is the underlying
+ * awaiting events that already happened. A thread can become terminal before the readiness
+ * promise continuation attaches dispatch listeners; the latch is what makes that ordering
+ * safe. `worker` is the underlying
  * `node:worker_threads` thread (its `postMessage` / `terminate` drive the protocol).
  */
 export interface NodeThread {
@@ -64,8 +48,9 @@ export interface NodeThread {
  *
  * @remarks
  * - `script` — the worker module each pooled thread runs; its module must call
- *   `serveWorker(...)`. A `.ts` script requires Node ≥ 23.6 (native type-stripping); on
- *   older Node point this at a built `.js` / `.mjs`.
+ *   `serveWorker(...)`. Raw TypeScript is unflagged on Node 22.18+ and Node 23.6+;
+ *   Node 22.12–22.17 and Node 23.0–23.5 require `--experimental-strip-types`. A built
+ *   `.js` / `.mjs` script remains an alternative across supported Node versions.
  * - `input` — narrows the work payload BEFORE it crosses the structured-clone boundary
  *   (fail-fast) and supplies the `TInput` inference, so call sites need no type argument.
  * - `result` — narrows every reply value coming back from a thread; an invalid reply
@@ -73,7 +58,8 @@ export interface NodeThread {
  * - `workerData` — opaque data cloned to every thread once at spawn (read there via
  *   `serveWorker`'s host `workerData`); must be structured-cloneable.
  * - `concurrency` — the maximum jobs in flight at once; the thread pool's `max` matches
- *   it, so at most this many threads exist. Defaults to `1`. Floored at `1`.
+ *   it, so at most this many threads exist. Defaults to `1` and must be a positive safe
+ *   integer, as validated by the underlying queue.
  * - `retries` — the default extra attempts per job on failure / timeout; defaults to `0`.
  * - `timeout` — the default per-attempt deadline in milliseconds; defaults to none.
  * - `store` — durable backing for outstanding jobs (survives a restart; `restore()`

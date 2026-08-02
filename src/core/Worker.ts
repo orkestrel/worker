@@ -14,16 +14,23 @@ import { Queue } from '@orkestrel/queue'
  *   `options.pool`) and a `Queue` whose handler ACQUIRES a pooled resource, runs the
  *   user handler against it, and RELEASES it in a `finally`. All concurrency, retries,
  *   timeout, and lifecycle are the Queue's — the Worker adds only the resource pairing.
- * - **Resource ↔ concurrency.** The pool's `max` defaults to the worker's
- *   `concurrency` (default `1`), so at most one resource exists per in-flight job and
- *   idle resources are reused across jobs.
+ * - **Resource ↔ concurrency.** The queue strictly validates `concurrency` as a positive
+ *   safe integer after caller options are captured once. Only `undefined` defaults
+ *   `concurrency` to `1` or pool `max` to that value; runtime `null` reaches the owning
+ *   validator. The queue validates before the pool option is read; every declared pool member
+ *   is then captured once by direct access, preserving inherited and non-enumerable structural
+ *   options. At most one resource exists per in-flight job by default, and idle resources are
+ *   reused across jobs.
  * - **Acquire over the attempt signal.** Each job acquires using the attempt's
  *   `execution.signal`, so an `abort` / `timeout` while waiting for a resource rejects
  *   the acquire — the Queue then handles retry / rejection, and there is no token to
  *   release (the resource was never leased).
  * - **Lifecycle (§10).** `enqueue` / `restore` / `start` / `stop` / `pause` / `resume` /
  *   `abort` / `clear` delegate to the queue; `count` / `active` / `paused` / `stopped`
- *   read it. `destroy` destroys the queue then tears the pool down, idempotently.
+ *   read it. `stop` / `abort` / `clear` return the queue's own cleanup barriers.
+ *   `destroy` returns one stable barrier while it tears down the queue, then the pool,
+ *   and destroys the worker emitter last. A sole cleanup failure is preserved by
+ *   identity; failures from both layers become an ordered `AggregateError`.
  * - **Durability.** An optional `store` is passed straight through to the queue, so the
  *   worker's outstanding jobs persist; `restore` re-runs them (delegated to the queue).
  * - **Observable (§13).** The owned {@link emitter} ({@link WorkerEventMap}) RE-EXPOSES the
@@ -45,25 +52,40 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 	// handler), so it never escapes into queue or pool.
 	readonly #emitter: Emitter<WorkerEventMap<TResult>>
 	readonly #handler: WorkerHandler<TInput, TResource, TResult>
-	#destroyed = false
+	#ending: PromiseWithResolvers<void> | undefined
 
 	constructor(options: WorkerOptions<TInput, TResource, TResult>) {
-		const concurrency = Math.max(1, options.concurrency ?? 1)
-		this.#handler = options.handler
+		const {
+			concurrency: capturedConcurrency,
+			handler,
+			on,
+			error,
+			retries,
+			timeout,
+			store,
+		} = options
+		const concurrency = capturedConcurrency === undefined ? 1 : capturedConcurrency
+		this.#handler = handler
 		this.#emitter = new Emitter<WorkerEventMap<TResult>>({
-			...(options.on !== undefined ? { on: options.on } : {}),
-			...(options.error !== undefined ? { error: options.error } : {}),
-		})
-		this.#pool = new Pool<TResource>({
-			...options.pool,
-			max: options.pool.max ?? concurrency,
+			...(on !== undefined ? { on } : {}),
+			...(error !== undefined ? { error } : {}),
 		})
 		this.#queue = new Queue<TInput, TResult>({
 			handler: this.#handle.bind(this),
 			concurrency,
-			...(options.retries !== undefined ? { retries: options.retries } : {}),
-			...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
-			...(options.store !== undefined ? { store: options.store } : {}),
+			...(retries !== undefined ? { retries } : {}),
+			...(timeout !== undefined ? { timeout } : {}),
+			...(store !== undefined ? { store } : {}),
+		})
+		const pool = options.pool
+		const { max, on: poolOn, error: poolError, create, destroy, validate } = pool
+		this.#pool = new Pool<TResource>({
+			create,
+			max: max === undefined ? concurrency : max,
+			...(poolOn !== undefined ? { on: poolOn } : {}),
+			...(poolError !== undefined ? { error: poolError } : {}),
+			...(destroy !== undefined ? { destroy } : {}),
+			...(validate !== undefined ? { validate } : {}),
 		})
 		this.#bridge()
 	}
@@ -100,8 +122,8 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		this.#queue.start()
 	}
 
-	stop(): void {
-		this.#queue.stop()
+	stop(): Promise<void> {
+		return this.#queue.stop()
 	}
 
 	pause(): void {
@@ -112,19 +134,20 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		this.#queue.resume()
 	}
 
-	abort(reason?: unknown): void {
-		this.#queue.abort(reason)
+	abort(reason?: unknown): Promise<void> {
+		return this.#queue.abort(reason)
 	}
 
-	clear(): void {
-		this.#queue.clear()
+	clear(): Promise<void> {
+		return this.#queue.clear()
 	}
 
-	destroy(): void {
-		if (this.#destroyed) return
-		this.#destroyed = true
-		this.#queue.destroy()
-		void this.#pool.destroy()
+	destroy(): Promise<void> {
+		if (this.#ending !== undefined) return this.#ending.promise
+		const ending = Promise.withResolvers<void>()
+		this.#ending = ending
+		void this.#teardown(ending)
+		return ending.promise
 	}
 
 	async #handle(input: TInput, execution: QueueExecution): Promise<TResult> {
@@ -134,6 +157,24 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		} finally {
 			token.release()
 		}
+	}
+
+	async #teardown(ending: PromiseWithResolvers<void>): Promise<void> {
+		const failures: unknown[] = []
+		try {
+			await this.#queue.destroy()
+		} catch (error) {
+			failures.push(error)
+		}
+		try {
+			await this.#pool.destroy()
+		} catch (error) {
+			failures.push(error)
+		}
+		this.#emitter.destroy()
+		if (failures.length === 0) ending.resolve()
+		else if (failures.length === 1) ending.reject(failures[0])
+		else ending.reject(new AggregateError(failures, 'worker destroy cleanup failed'))
 	}
 
 	// Bridge the inner queue's lifecycle onto the worker's OWN emitter, once at construction.

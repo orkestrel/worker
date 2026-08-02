@@ -1,4 +1,4 @@
-// @ts-nocheck — a real worker-thread script (see double.ts).
+// A real worker-thread script.
 import { serveWorker } from '../../../../src/server/serve.ts'
 
 // CRASHES the thread mid-flight (not a handler throw): a NEGATIVE input calls
@@ -8,7 +8,7 @@ import { serveWorker } from '../../../../src/server/serve.ts'
 // non-negative input doubles as usual, so a SUBSEQUENT job proves the pool spun up a fresh
 // thread after the crashed one was evicted.
 serveWorker({
-	input: (value) => typeof value === 'number',
+	input: (value: unknown): value is number => typeof value === 'number',
 	handler: (value) => {
 		if (value < 0) process.exit(1)
 		return value * 2
