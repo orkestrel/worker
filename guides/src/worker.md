@@ -100,7 +100,7 @@ try {
 | `WorkerInterface`    | interface | `emitter` / `count` / `active` / `paused` / `stopped` data members + the lifecycle + `enqueue` / `restore` methods.                                            |
 | `WorkerEventMap`     | type      | The `Worker`'s observable events — the queue lifecycle it surfaces (`enqueue` / `start` / `retry` / `success` / `failure` / `abort` / `drain`).                |
 | `NodeWorkerOptions`  | interface | `createNodeWorker` options — `script` + `input` / `result` guards + `workerData?` / `concurrency?` / `retries?` / `timeout?` / `store?`.                       |
-| `ServeWorkerOptions` | interface | `serveWorker` options — the `input` guard + the `handler` (receives the narrowed input + `{ signal }`).                                                        |
+| `ServeWorkerOptions` | interface | `serveWorker` options — the `input` guard + the `handler` (receives the narrowed input + Queue `QueueExecution` `{ id, signal }`).                             |
 | `NodeThread`         | interface | A leased worker thread + readonly `alive` / latched `death` observations (backed by private lifecycle state) — the pooled resource `createNodeWorker` runs on. |
 | `Reply`              | type      | A thread→main reply envelope — `{ id, ok: true, value }` or `{ id, ok: false, error }`; the internal wire protocol.                                            |
 
@@ -191,9 +191,13 @@ satisfy result guard'`), and the worker side narrows each payload through
    `options.input` (a bad input replies `'input did not satisfy input guard'`) —
    `TInput` / `TResult` are reconstructed by validation, never asserted. A throwing
    caller guard is contained and rejects only that job; the pooled worker remains usable.
-   The run/abort/reply protocol is internal: main → thread posts `{ id, command: 'run', input }` /
-   `{ id, command: 'abort' }`; thread → main posts `{ id, ok: true, value }` /
-   `{ id, ok: false, error }`.
+   The run/abort/reply protocol is internal: main → thread posts
+   `{ id, job, command: 'run', input }` / `{ id, command: 'abort' }`; thread → main posts
+   `{ id, ok: true, value }` / `{ id, ok: false, error }`. The run `id` is a fresh
+   per-dispatch correlation key used exclusively for replies, aborts, controllers, and
+   listeners; `job` is the Queue entry's stable `QueueExecution.id`, preserved across retry
+   attempts and crash restore and exposed to the thread handler as `execution.id`. A run
+   without a string `job` fails closed: the handler is not invoked and no reply is sent.
 6. **Abort TERMINATES + evicts the thread without losing its cause.** Because CPU-bound
    work cannot honour an `AbortSignal`, an `abort` / `timeout` posts the cooperative
    `abort`, flips `alive = false`, and observes `terminate()` settlement. Successful
@@ -273,8 +277,11 @@ await worker.destroy() // awaits termination of every thread
 The worker script registers its handler with `serveWorker`, which must be the thread
 module's entry. On a worker thread, registration captures `input` then `handler` exactly
 once and retains those identities for every job; on the main thread it reads neither.
-It receives the narrowed input and a `{ signal }` execution (the signal fires on a
-cooperative abort); its resolved value is the reply:
+It receives the narrowed input and the Queue's `{ id, signal }` execution. `id` is the stable
+Queue idempotency key across retries and crash restore; it identifies the work, not its caller,
+and is not authentication or authorization evidence. `signal` remains per attempt and fires on
+a cooperative abort. Existing handlers that ignore the execution or destructure only `signal`
+remain source-compatible; the handler's resolved value is the reply:
 
 ```ts
 // double.ts — the worker script
@@ -282,9 +289,17 @@ import { serveWorker } from '@orkestrel/worker/server'
 
 serveWorker<number, number>({
 	input: (value): value is number => typeof value === 'number',
-	handler: (value, { signal }) => value * 2,
+	handler: (value, { id, signal }) => {
+		console.log(`running ${id}`)
+		if (signal.aborted) throw signal.reason
+		return value * 2
+	},
 })
 ```
+
+Per-job consumer context remains explicit structured-cloneable `TInput`. Ambient main-thread
+state, including `AsyncLocalStorage`, does not cross a worker-thread structured-clone boundary;
+there is no implicit caller transport.
 
 Because CPU-bound work cannot honour its signal, an `abort` or a per-attempt `timeout`
 **terminates** the in-flight thread and evicts it from the pool — the next job spawns a
@@ -462,7 +477,9 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
   main-side worker-thread machinery (`spawnThread` / `dispatch`), driven
   through `createNodeWorker` over REAL worker threads (no mocking): a round-trip and a
   batch over a small pool; the concurrency cap AND the live-thread cap + idle reuse; a
-  throwing handler rejecting with its error, and re-running under `retries`; a
+  throwing handler rejecting with its error, and re-running under `retries`; explicit enqueue
+  ids reaching the thread handler, retry attempts retaining one stable job id while using fresh
+  correlation ids, and a real pre-populated `MemoryQueueStore` restore retaining its stored id; a
   per-attempt `timeout` rejecting AND terminating the uncooperative thread, with a later
   job served on a fresh thread; a direct in-flight abort preserving the caller's exact
   reason object; a code-1 crash rejecting with the exact latched `NodeThread.death` and
@@ -483,7 +500,10 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
   or incomplete envelopes, non-records, hostile getters, and stray messages.
 - [`tests/src/server/serve.test.ts`](../../tests/src/server/serve.test.ts) —
   `serveWorker` driven MANUALLY over a raw `node:worker_threads` thread (post a run/abort
-  envelope, await the reply): the success envelope, false and throwing input-guard
+  envelope, await the reply): reply correlation remaining distinct from the stable execution id,
+  missing / non-string job ids plus revoked proxies and throwing job getters invoking no handler
+  and producing no reply, abort routing by correlation id when the stable job id differs, the
+  success envelope, false and throwing input-guard
   rejection envelopes, a non-cloneable success falling back to a clone-safe error while a
   later job succeeds on the same thread, a handler-throw error envelope (SYNC and ASYNC
   rejections both reported as `{ ok: false }`), a `{ command: 'abort' }` firing the
@@ -495,14 +515,16 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
   getter throws, and the main-thread no-op reading neither option.
 - The worker fixtures under
   [`tests/src/server/fixtures`](../../tests/src/server/fixtures) (`double` / `fail` /
-  `slow` / `bad-result` / `abortable` / `crash` / `identify` / `echo-data` / `sum` /
+  `slow` / `bad-result` / `abortable` / `crash` / `identify` / `execution` / `identity` /
+  `echo-data` / `sum` /
   `stray` / `malformed` / `throw-async` / `load-throw` / `echo` / `noncloneable-result` /
   `serve-options`) are
   real `.ts` worker scripts loaded by Node's type-stripping. Raw TypeScript is unflagged on
   Node 22.18+ and Node 23.6+; on Node 22.12–22.17 and Node 23.0–23.5 the `src:server` Vitest
   project supplies `--experimental-strip-types`. Ordinary fixtures import `serveWorker` by
-  relative-to-source path; `malformed` speaks the internal envelope protocol directly so it can
-  keep a tainted thread alive after its invalid reply. Every fixture contains no diagnostic
+  relative-to-source path; `malformed` and `identity` speak the internal envelope protocol
+  directly. `malformed` keeps a tainted thread alive after its invalid reply; `identity` observes
+  the fresh correlation id and stable job id across a retry. Every fixture contains no diagnostic
   suppression and is included in the root TypeScript project while remaining outside test
   discovery (not a `*.test.ts`).
 

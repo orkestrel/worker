@@ -752,7 +752,9 @@ export function environmentBoundary(
 									? undefined
 									: packageRootOf(packageName, physicalSource)
 							if (packageRoot === undefined || !containedPath(packageRoot, physicalSource)) {
-								this.error('Resolved dependencies must remain inside their physical package root')
+								return this.error(
+									'Resolved dependencies must remain inside their physical package root',
+								)
 							}
 							trustedPackageRoots.add(packageRoot)
 						}
@@ -760,7 +762,7 @@ export function environmentBoundary(
 					}
 					const resolvedSource = workspacePath(physicalSource)
 					if (resolvedSource === undefined) {
-						this.error('Environment modules cannot import files outside the workspace')
+						return this.error('Environment modules cannot import files outside the workspace')
 					}
 					const assetError = environmentPathError(owner, resolvedSource)
 					if (assetError !== undefined) this.error(assetError)
@@ -806,6 +808,7 @@ export const srcServer = (config?: UserConfig): UserConfig =>
 					outDir: 'dist/src/server',
 					target: 'node22',
 					rolldownOptions: {
+						platform: 'node',
 						external: (id: string) =>
 							id === '@src/core' || id.startsWith('node:') || id.startsWith('@orkestrel/'),
 						output: [
@@ -827,9 +830,6 @@ export const srcServer = (config?: UserConfig): UserConfig =>
 					include: ['tests/src/server/**/*.test.ts'],
 					exclude: ['tests/src/core/**/*.test.ts'],
 					setupFiles: ['./tests/setup.ts', './tests/setupServer.ts'],
-					execArgv: /^(?:22\.1[2-7]|23\.[0-5])\./u.test(process.versions.node)
-						? ['--experimental-strip-types']
-						: [],
 				},
 			},
 			config ?? {},

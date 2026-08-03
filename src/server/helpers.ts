@@ -41,8 +41,12 @@ export function spawnThread(script: string | URL, workerData: unknown): Promise<
  * Dispatch one job to a leased {@link NodeThread} and await its narrowed reply.
  *
  * @remarks
- * Mints a fresh `id`, posts a `run` envelope, and resolves when the thread replies for
- * that id: a success `value` is narrowed through `result` (a value that fails the guard
+ * Mints a fresh per-dispatch correlation `id`, posts it with `job: execution.id`, and
+ * resolves when the thread replies for that correlation id. The stable Queue job id reaches
+ * the worker handler for idempotency across retries and restore; it is not caller identity or
+ * authentication / authorization evidence. Per-job consumer context remains explicit,
+ * structured-cloneable `input`; ambient context is not worker-thread transport. A success
+ * `value` is narrowed through `result` (a value that fails the guard
  * rejects — the zero-`as` type bridge), a failure rejects with the thread's error string.
  * A thread that ALREADY died rejects synchronously at entry from the latched
  * {@link NodeThread.death} — its death events fired before this dispatch existed and will

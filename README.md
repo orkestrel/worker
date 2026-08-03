@@ -10,8 +10,14 @@ observable (a typed `emitter` re-exposes the underlying queue's job lifecycle
 — `enqueue` / `start` / `retry` / `success` / `failure` / `abort` / `drain`).
 For CPU-parallel work, the server surface's `createNodeWorker` specializes the
 core `createWorker` over a pool of `node:worker_threads`, crossing the
-structured-clone boundary with zero `as` via `input` / `result` guards. Part
-of the `@orkestrel` line.
+structured-clone boundary with zero `as` via `input` / `result` guards. Each
+thread handler receives `{ id, signal }`: `id` is the Queue's stable idempotency
+key across retries and crash restore, while `signal` is per attempt. The wire
+protocol separately mints a fresh correlation id for each dispatch so a stale
+reply cannot settle a later retry. The stable id identifies work, not a caller,
+and is not authentication or authorization evidence; per-job consumer context
+remains explicit structured-cloneable input rather than ambient thread state.
+Part of the `@orkestrel` line.
 
 ## Install
 

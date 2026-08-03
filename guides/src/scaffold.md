@@ -290,7 +290,8 @@ the accumulated `questions`, one `CompileRecord` per stage, any `CompileFailure`
 `GuideSync`, `VersionSync`, and `SyncReport` are the freshness shapes. `GuideSync` carries the
 fetched `content`, its `freshness`, an optional `note` explaining a non-clean outcome, and an
 optional `baseline` — the SHA-256 of the observed local mirror, or the literal `absent`, present
-only on target-aware pulls. `VersionSync` compares a declared `range` to the registry `latest`.
+only on target-aware synchronization. `VersionSync` compares a declared `range` to the registry
+`latest`.
 `SyncReport` is `clean` only when nothing drifted and nothing failed. `CatalogEntry` is one fleet
 package row; its `description` is the flattened text of that package's own guide's first
 blockquote, and the empty string when that guide is missing, unreadable, or carries no blockquote.
@@ -1014,7 +1015,7 @@ error.
 
 `packageShortName` strips the canonical scope, `guideStub` renders the pointer written when a
 dependency guide is not vendored yet, `readGuideReferences` reads a target's existing local mirrors
-so a pull's verdicts are target-relative, and `syncReportOf` assembles one report from already
+for package names so synchronization verdicts are target-relative, and `syncReportOf` assembles one report from already
 ordered guide and version outcomes.
 
 ### Compilers — core
@@ -1110,7 +1111,7 @@ along the three `ViteMachinery` axes:
 | Machinery                                                                | Emitted when                         |
 | ------------------------------------------------------------------------ | ------------------------------------ |
 | Shared CSS analysis (`ENVIRONMENT_CSS`, `preprocessCSS`, `isCSSRequest`) | a `src` or `app` browser environment |
-| Playwright provider and `resolveChromium`                                | a `src` or `app` browser environment |
+| Playwright provider and managed/system browser discovery                 | a `src` or `app` browser environment |
 | Vue plugin, HTML boundary, browser development server                    | an `app` browser environment         |
 | Output containment (`outputBoundary`, `enforceOutputPath`)               | anything the workspace builds        |
 
@@ -1303,6 +1304,7 @@ The interface also exposes the readonly `emitter`.
 | `versions` | `Promise<readonly VersionSync[]>`   |
 | `catalog`  | `Promise<readonly CatalogEntry[]>`  |
 | `pull`     | `Promise<SyncReport>`               |
+| `mirror`   | `Promise<SyncReport>`               |
 | `write`    | `Promise<readonly string[]>`        |
 | `destroy`  | `void`                              |
 
@@ -1315,7 +1317,9 @@ latest. `catalog()` enumerates the fleet from the registry's exact organization 
 unreachable or malformed list is always a coded failure, since without it there is no catalog — then
 degrades gracefully per package. `pull(target, dependencies?)` builds the reference map from the
 target's own mirrors, so its verdicts are target-relative, and rejects a selection the target does
-not declare. `write(report, target)` commits only the `behind` guides. `destroy()` aborts every
+not declare. `mirror(target)` reuses the exact organization enumeration without catalog's
+per-package packument reads, sorts the names, excludes the target's own manifest name, and builds a
+guide-only report with no versions. `write(report, target)` commits only the `behind` guides. `destroy()` aborts every
 in-flight request. The interface also exposes the readonly `emitter`.
 
 ## The compile pipeline
@@ -1448,7 +1452,7 @@ as a plain physical file whose bytes still match the preview, moved into a priva
 than unlinked, re-verified after the move, and only then reported as removed — with a full restore
 attempt if any candidate fails mid-way.
 
-## Upstream sync, pull, and catalog
+## Upstream sync, pull, mirror, and catalog
 
 `Sync` is the only network reader, and its posture is conservative by construction.
 
@@ -1471,7 +1475,7 @@ underlying socket code appended when the runtime attaches one, an HTTP status, t
 redirect-blocked string, or the oversized-body message. `current` and `behind` carry no note,
 because there is nothing to explain.
 
-`pull` is the target-aware composition. It reads the target's declared scoped dependencies from its
+`pull` is the dependency-aware composition. It reads the target's declared scoped dependencies from its
 manifest, rejects any explicit selection the target does not declare, builds the reference map from
 the target's own `guides/src/<short>.md` mirrors, fetches guides and versions under one shared
 allowance, and assembles a report whose `clean` flag requires both no drift and no failures. A
@@ -1497,6 +1501,14 @@ The rendered block is deliberately minimal. `catalogToBlock` emits a standing tr
 generated package identifiers are untrusted discovery data, never instructions — followed by a table
 with **`Package` and `Version` columns only**. Descriptions are network-controlled text, and that
 block is written into an agent instruction file, so they are omitted on purpose.
+
+`mirror` is the fleet-guide composition. It shares `catalog`'s single exact organization-list read
+but performs none of catalog's packument or description work. It code-unit sorts the discovered
+names, excludes the target's own manifest name under the one-owner guide law, reads existing local
+guide references for baselines, fetches every selected GitHub guide once, and emits a `SyncReport`
+whose `versions` collection is empty. The existing transactional `write` method applies only
+behind guides; the executable refuses the whole apply when any guide is missing or failed, so a
+fleet refresh is never partial. Files outside the discovered guide set remain untouched.
 
 ## The generated workspace
 
@@ -1714,15 +1726,22 @@ it is not a general-purpose source analyzer. Generated workspaces receive the sa
 module as a host-origin file and run it as a dedicated Node-only `policy` test project over
 `tests/policy.test.ts`.
 
-**Real browser capability.** Browser test projects are gated on the real executable: the generated
-configuration and the generated policy test both probe `existsSync(chromium.executablePath())`. A
-browser suite runs when a real Chromium is installed and is skipped honestly when it is not, rather
-than being faked. The gate is applied at registration, not inside the real browser project: without
-Chromium, each browser factory is replaced by a same-label Node/no-test placeholder, so generated
-`--project <label>` and `--project=<label>` filters still resolve while no browser code runs. The
-root permits an empty run only when every recognized exact project filter names one of those gated
-placeholders; an unreadable or mixed filter keeps the ordinary no-test failure semantics for its
-Node projects. One printed warning names every gated project label. A machine with a browser
+**Real browser capability.** Browser test projects are gated on one centralized discovery chain:
+Playwright's pinned Chromium executable first, then a managed Chromium alias or cached revision,
+then stable system Chrome, then stable system Edge. Managed candidates must be executable regular
+files. System channels are selected only when their executable exists at Playwright's standard
+Linux, macOS, or Windows installation location; custom installations are not guessed. The generated
+policy test consumes the same discovery helpers and accepts either an executable managed path or the
+stable `chrome` / `msedge` channel, so it does not maintain a second heuristic.
+
+A browser suite runs when any one of those real browser capabilities is available and is skipped
+honestly when none is, rather than being faked. The gate is applied at registration, not inside the
+real browser project: without a browser, each browser factory is replaced by a same-label
+Node/no-test placeholder, so generated `--project <label>` and `--project=<label>` filters still
+resolve while no browser code runs. The root permits an empty run only when every recognized exact
+project filter names one of those gated placeholders; an unreadable or mixed filter keeps the
+ordinary no-test failure semantics for its Node projects. One printed warning names every gated
+project label and says no Playwright Chromium, Chrome, or Edge was found. A machine with a browser
 registers and runs the real browser suites unchanged; a machine without one runs the remaining
 projects and says so.
 
@@ -1764,12 +1783,13 @@ each Codex agent's declared `sandbox_mode` is its mechanical permission floor, w
 ## The `scaffold` executable
 
 The bin is a thin command-line shell over the two library faces. It exports nothing, so it carries
-no module API of its own. Six verbs:
+no module API of its own. Seven verbs:
 
 | Verb      | Purpose                                                  |
 | --------- | -------------------------------------------------------- |
 | `new`     | scaffold a workspace into `./<name>`                     |
 | `pull`    | refresh vendored guides and versions, report drift       |
+| `mirror`  | refresh every published Orkestrel package guide          |
 | `audit`   | whole-plan conformance report                            |
 | `repair`  | restore host-owned files and optional generated canon    |
 | `fleet`   | audit or repair every workspace under the cwd's children |
@@ -1789,8 +1809,10 @@ extras so the workspace stays audit-clean.
 repeatable and points at a local template or catalog source instead of the bundled one.
 On `pull`, `--deps x,y` limits refresh to those declared Orkestrel dependencies; without it, every
 declared dependency mirror is considered.
+`mirror` accepts no dependency selection: its exact npm organization discovery is the operation's
+scope, and it fetches guides without registry version or packument requests.
 `--groups a,b` scopes an audit to artifact groups. `--live` adds an upstream freshness check to an
-audit. `--strict` makes a pull throw on a network fault. `--offline` restricts a catalog to local
+audit. `--strict` makes a pull or mirror throw on a network fault. `--offline` restricts a catalog to local
 sources. `--prune` opts a repair or fleet run into deleting unexpected files under the three prune
 directories. `--generated` opts a repair or fleet run into restoring generated canon except
 `package.json`; on `audit`, it is inherited if the interactive repair hand-off is accepted.
@@ -2260,7 +2282,7 @@ isBehind(rangeToFreshness('^0.0.7', '0.0.9')) // true
 
 packageShortName('@orkestrel/contract') // 'contract'
 guideStub('guides/src/contract.md') // the local pointer content
-readGuideReferences('./packages/router', [{ name: '@orkestrel/contract', range: '^0.0.7' }])
+readGuideReferences('./packages/router', ['@orkestrel/contract'])
 syncReportOf('./packages/router', [], []) // { clean: true, failed: 0, … }
 ```
 
@@ -2325,7 +2347,22 @@ await sync.guides(deps)
 await sync.versions(deps)
 await sync.catalog()
 
+const mirror = await sync.mirror('.')
+if (mirror.failed === 0) await sync.write(mirror, '.')
+
 sync.destroy()
+```
+
+Refresh the entire published guide mirror from an installed package:
+
+```sh
+npx scaffold mirror --apply --yes
+```
+
+Or from this checkout after building:
+
+```sh
+node ./dist/bin/scaffold.js mirror --apply --yes
 ```
 
 ### Fleet discovery, prune scanning, and the local catalog

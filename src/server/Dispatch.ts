@@ -74,7 +74,12 @@ export class Dispatch<TResult> {
 		}
 		this.#execution.signal.addEventListener('abort', this.#abortHandler, { once: true })
 		try {
-			this.#worker.postMessage({ id: this.#id, command: 'run', input: this.#input })
+			this.#worker.postMessage({
+				id: this.#id,
+				job: this.#execution.id,
+				command: 'run',
+				input: this.#input,
+			})
 		} catch (error: unknown) {
 			this.#fail(error instanceof Error ? error : new Error(String(error)))
 		}

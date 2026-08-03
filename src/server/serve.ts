@@ -11,20 +11,39 @@ import { parentPort } from 'node:worker_threads'
 // Inlined record guard (do NOT import `isRecord` from `@src/core` — see above). Total:
 // adversarial input returns `false`, never throws (AGENTS §14).
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value)
+	try {
+		return typeof value === 'object' && value !== null && !Array.isArray(value)
+	} catch {
+		return false
+	}
 }
 
-// Narrow an inbound message to a `run` envelope (a string `id` + a `'run'` command + an
-// `input` payload) — no assertion.
-function isRun(value: unknown): value is { readonly id: string; readonly input: unknown } {
-	return (
-		isRecord(value) && typeof value.id === 'string' && value.command === 'run' && 'input' in value
-	)
+// Narrow an inbound message to a `run` envelope: `id` is the per-dispatch correlation,
+// while `job` is the stable Queue execution id exposed to the handler. Both are required;
+// a legacy or malformed envelope without a string `job` fails closed without a reply.
+function isRun(
+	value: unknown,
+): value is { readonly id: string; readonly job: string; readonly input: unknown } {
+	try {
+		return (
+			isRecord(value) &&
+			typeof value.id === 'string' &&
+			typeof value.job === 'string' &&
+			value.command === 'run' &&
+			'input' in value
+		)
+	} catch {
+		return false
+	}
 }
 
 // Narrow an inbound message to an `abort` envelope (a string `id` + an `'abort'` command).
 function isAbort(value: unknown): value is { readonly id: string } {
-	return isRecord(value) && typeof value.id === 'string' && value.command === 'abort'
+	try {
+		return isRecord(value) && typeof value.id === 'string' && value.command === 'abort'
+	} catch {
+		return false
+	}
 }
 
 /**
@@ -34,12 +53,15 @@ function isAbort(value: unknown): value is { readonly id: string } {
  * Must be the spawned thread's module entry. It listens on the parent port for the
  * run/abort protocol: a `run` message narrows its `input` through `options.input` (an
  * invalid payload replies with an error envelope, never running the handler), then runs
- * `options.handler(input, { signal })` and replies `{ id, ok: true, value }` on success or
+ * `options.handler(input, { id: job, signal })` and replies `{ id, ok: true, value }` on success or
  * `{ id, ok: false, error }` on throw. Input-guard throws use the same failure envelope. If a
  * success value cannot be cloned, the post is retried as a clone-safe failure; if that post also
  * fails, the parent port closes so the main side observes thread exit instead of waiting forever.
- * Each in-flight job has its own `AbortController`,
- * so an `abort` message for that id fires the handler's `signal` (cooperative — the main
+ * The run envelope's `id` is fresh per dispatch and keys controllers, aborts, and replies;
+ * its `job` is the stable Queue idempotency key exposed as `execution.id` across retries
+ * and restore. That job id identifies work, not a caller, and is not authentication or
+ * authorization evidence. Each attempt has its own `AbortController`, so an `abort`
+ * message for the correlation id fires the handler's `signal` (cooperative — the main
  * side ALSO terminates the thread, so a handler that ignores its signal is still stopped).
  * Every inbound message is narrowed with the inlined guards — no `as`. On the main thread
  * (`parentPort === null`) it is a no-op.
@@ -80,7 +102,7 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 					throw new Error('input did not satisfy input guard')
 				}
 				const value = raw.input
-				return handler(value, { signal: controller.signal })
+				return handler(value, { id: raw.job, signal: controller.signal })
 			})
 			.then((value) => {
 				controllers.delete(id)

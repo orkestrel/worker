@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import dts from 'vite-plugin-dts'
-import { srcServer, resolveWorkspacePath } from '../../vite.config.js'
+import { srcServer, resolveWorkspacePath } from '../../vite.config.ts'
 
 // Types are bundled inline by vite-plugin-dts (see configs/src/vite.core.config.ts
 // for the same pattern).

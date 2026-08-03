@@ -10,6 +10,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isRecord } from '@orkestrel/contract'
 
+/** Post one valid raw run envelope to a real worker thread. */
+export function postRun(thread: ThreadWorker, id: string, job: string, input: unknown): void {
+	thread.postMessage({ id, job, command: 'run', input })
+}
+
 // A fresh on-disk JSON-store path under the OS temp dir, with a `cleanup` thunk
 // that removes its directory. Used by the `createJSONQueueStore` tests, which need
 // real file persistence across a store reopen. Call `cleanup` in `afterEach` so no

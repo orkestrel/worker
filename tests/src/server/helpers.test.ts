@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { arrayOf, isNumber, isRecord, unionOf } from '@orkestrel/contract'
+import {
+	arrayOf,
+	isBoolean,
+	isNumber,
+	isRecord,
+	isString,
+	numberShape,
+	unionOf,
+} from '@orkestrel/contract'
+import { MemoryQueueStore } from '@orkestrel/queue'
 import { fileURLToPath } from 'node:url'
 import { createNodeWorker, dispatch, spawnThread } from '@src/server'
-import { createTeardown, waitForDelay } from '../../setup.js'
+import { createGate, createTeardown, waitForDelay } from '../../setup.js'
 
 // src/server/helpers.ts — the main-side worker-thread machinery (`spawnThread` /
 // `dispatch`) `createNodeWorker` composes over. The round-trip suites below
@@ -95,6 +104,57 @@ describe('createNodeWorker — failure + retry', () => {
 		)
 		// Three attempts (1 + 2 retries), all throw — the job still rejects with the error.
 		await expect(worker.enqueue(9)).rejects.toThrow('boom:9')
+	})
+})
+
+describe('createNodeWorker — stable Queue execution identity', () => {
+	it('exposes an explicit enqueue id to the worker handler', async () => {
+		const worker = track(
+			createNodeWorker({
+				script: fixture('execution.ts'),
+				input: isNumber,
+				result: isString,
+			}),
+		)
+		await expect(worker.enqueue(1, { id: 'stable-enqueue' })).resolves.toBe('stable-enqueue')
+	})
+
+	it('keeps the job id stable while minting a fresh retry correlation id', async () => {
+		const worker = track(
+			createNodeWorker({
+				script: fixture('identity.ts'),
+				input: isNumber,
+				result: (
+					value: unknown,
+				): value is { readonly correlation: boolean; readonly job: boolean } =>
+					isRecord(value) && isBoolean(value.correlation) && isBoolean(value.job),
+				retries: 1,
+			}),
+		)
+		await expect(worker.enqueue(1, { id: 'stable-retry' })).resolves.toEqual({
+			correlation: true,
+			job: true,
+		})
+	})
+
+	it('exposes a restored MemoryQueueStore id to the worker handler', async () => {
+		const store = new MemoryQueueStore(numberShape())
+		await store.save({ id: 'stable-restore', input: 1, attempts: 0 })
+		const worker = track(
+			createNodeWorker({
+				script: fixture('execution.ts'),
+				input: isNumber,
+				result: isString,
+				store,
+			}),
+		)
+		const handled = createGate<{ readonly id: string; readonly result: string }>()
+		worker.emitter.on('success', (id, result) => handled.resolve({ id, result }))
+		await worker.restore()
+		await expect(handled.promise).resolves.toEqual({
+			id: 'stable-restore',
+			result: 'stable-restore',
+		})
 	})
 })
 

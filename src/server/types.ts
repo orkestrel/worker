@@ -1,5 +1,5 @@
 import type { Guard } from '@orkestrel/contract'
-import type { QueueStoreInterface } from '@orkestrel/queue'
+import type { QueueExecution, QueueStoreInterface } from '@orkestrel/queue'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
 
 /**
@@ -86,17 +86,17 @@ export interface NodeWorkerOptions<TInput, TResult> {
  * - `input` — narrows each inbound payload inside the thread; an invalid payload replies
  *   with an error envelope rather than running the handler. Supplies the `TInput`
  *   inference for the handler.
- * - `handler` — runs one job; receives the narrowed input and a `{ signal }` execution
- *   whose `AbortSignal` fires when the main side aborts the job (cooperative). May be
- *   async; its resolved value (which must be structured-cloneable) is the reply.
+ * - `handler` — runs one job; receives the narrowed input and the Queue's execution.
+ *   `execution.id` is the stable Queue idempotency key across retries and crash restore;
+ *   it identifies work, not a caller, and is not authentication or authorization evidence.
+ *   `execution.signal` is per attempt and fires when the main side aborts that attempt
+ *   (cooperative). The handler may be async; its resolved value (which must be
+ *   structured-cloneable) is the reply.
  *
  * @typeParam TInput - The work payload (inferred from `input`)
  * @typeParam TResult - The value the handler resolves (the reply payload)
  */
 export interface ServeWorkerOptions<TInput, TResult> {
 	readonly input: Guard<TInput>
-	readonly handler: (
-		input: TInput,
-		execution: { readonly signal: AbortSignal },
-	) => Promise<TResult> | TResult
+	readonly handler: (input: TInput, execution: QueueExecution) => Promise<TResult> | TResult
 }
