@@ -445,7 +445,7 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
 
 ## Tests
 
-- [`tests/guides/src/parity.test.ts`](../../tests/guides/src/parity.test.ts) — the
+- [`tests/guides.test.ts`](../../tests/guides.test.ts) — the
   `## Surface` ↔ `src/core` / `src/server` bijection (value + type exports) and the
   `WorkerInterface` ↔ `Worker` method bijection.
 - [`tests/policy.test.ts`](../../tests/policy.test.ts) — repository policy rejects private

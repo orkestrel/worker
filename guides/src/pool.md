@@ -238,7 +238,7 @@ await pool.destroy()
   contention.
 - [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — factory
   construction and instance identity only.
-- [`tests/guides/src/parity.test.ts`](../../tests/guides/src/parity.test.ts) — source/export,
+- [`tests/guides.test.ts`](../../tests/guides.test.ts) — source/export,
   method, example, import, and link parity.
 
 ## See also
