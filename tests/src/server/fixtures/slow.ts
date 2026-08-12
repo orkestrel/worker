@@ -1,5 +1,5 @@
 // A real worker-thread script.
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 // A busy CPU loop that does NOT honour its abort signal — it spins for `value`
 // milliseconds of wall-clock work. Proves the timeout/abort path TERMINATES the thread

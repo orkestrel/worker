@@ -1,7 +1,7 @@
 // A real worker-thread script. Sums a numeric array, so a
 // LARGE / deep input and its numeric result both cross the structured-clone boundary —
 // stressing the clone path beyond a single scalar.
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 serveWorker({
 	input: (value: unknown): value is readonly number[] =>

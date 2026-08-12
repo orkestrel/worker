@@ -1,5 +1,5 @@
 // A real worker-thread script.
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 // Always throws — proves a handler rejection surfaces as an error reply (and retries).
 serveWorker({

@@ -1,5 +1,5 @@
 import { workerData } from 'node:worker_threads'
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 if (!(workerData instanceof SharedArrayBuffer)) {
 	throw new Error('serve option fixture requires shared counters')

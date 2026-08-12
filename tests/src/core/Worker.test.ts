@@ -634,7 +634,7 @@ describe('Worker — a signal-ignoring handler keeps its resource leased', () =>
 		const a = worker.enqueue(0)
 		const aSettlement = Promise.allSettled([a])
 		let b: Promise<void> | undefined
-		let bSettlement: Promise<PromiseSettledResult<void>[]> | undefined
+		let bSettlement: Promise<Array<PromiseSettledResult<void>>> | undefined
 		try {
 			await expect(a).rejects.toThrow('attempt timed out')
 			expect(worker.active).toBe(0) // the queue slot is free again

@@ -25,8 +25,8 @@
 > For CPU parallelism, `createNodeWorker` (`@orkestrel/worker/server`) specializes `createWorker` over a
 > pool of `node:worker_threads`, with `serveWorker` as the worker-side entry; the
 > structured-clone boundary is narrowed by `input` / `result` guards with zero `as`.
-> Source: [`src/core`](../../src/core) (the `Worker` facade) and
-> [`src/server`](../../src/server) (the thread pool + the worker-side entry). Surfaced
+> Source: [`src/core`](../src/core) (the `Worker` facade) and
+> [`src/server`](../src/server) (the thread pool + the worker-side entry). Surfaced
 > through the `@orkestrel/worker` and `@orkestrel/worker/server` exports.
 
 ## Surface
@@ -445,13 +445,17 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
 
 ## Tests
 
-- [`tests/guides.test.ts`](../../tests/guides.test.ts) — the
+- [`tests/guides.test.ts`](../tests/guides.test.ts) — the
   `## Surface` ↔ `src/core` / `src/server` bijection (value + type exports) and the
   `WorkerInterface` ↔ `Worker` method bijection.
-- [`tests/policy.test.ts`](../../tests/policy.test.ts) — repository policy rejects private
-  `@src/*` imports inside TSDoc examples while permitting real source-alias imports and
-  identical text in ordinary non-TSDoc comments.
-- [`tests/src/core/Worker.test.ts`](../../tests/src/core/Worker.test.ts) — the handler
+- [`tests/policy.test.ts`](../tests/policy.test.ts) — the fleet placement sweep over
+  `src`: every module function sits in a function-kind file, every centralized declaration
+  is exported, types sit in `types.ts`, classes match their file, and every module test
+  under `tests/src` mirrors a real source module.
+- [`tests/config.test.ts`](../tests/config.test.ts) — the root configuration resolves every
+  declared alias to a real entry, registers every workspace project with its fixed include
+  and setup files, and builds each face to its declared output.
+- [`tests/src/core/Worker.test.ts`](../tests/src/core/Worker.test.ts) — the handler
   runs against a pooled resource; resources are reused across jobs and never exceed the
   pool max; the resource is released even when the handler throws (a later job reuses
   it); the lifecycle (`pause` / `resume` / `abort` / `stop` / `clear` / `destroy`)
@@ -465,15 +469,15 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
   then pool cleanup, destroys the worker emitter last, and preserves a sole pool failure;
   and durability passthrough — a `store` persists a job and `restore()` re-runs it against
   a fresh resource (delegated to the queue), a no-op without a store.
-- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) —
+- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) —
   `createWorker` returns a working, typed instance end to end and honours its options +
   status surface.
-- [`tests/src/server/factories.test.ts`](../../tests/src/server/factories.test.ts) —
+- [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) —
   `createJSONQueueStore` over a real temp file: entries persist ACROSS store instances on
   the same path (a second store `load`s the first's work), a nested-object input survives
   the JSON round-trip, and a `remove` is reflected across a reopen; plus a
   `createNodeWorker` round-trip smoke (a job over a real thread, then teardown).
-- [`tests/src/server/helpers.test.ts`](../../tests/src/server/helpers.test.ts) — the
+- [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — the
   main-side worker-thread machinery (`spawnThread` / `dispatch`), driven
   through `createNodeWorker` over REAL worker threads (no mocking): a round-trip and a
   batch over a small pool; the concurrency cap AND the live-thread cap + idle reuse; a
@@ -495,10 +499,10 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
   cleanup; `destroy` with multiple threads mid-job terminating
   all; rapid enqueue/abort churn settling every job with no thread leak; and `destroy`
   terminating every thread so the process exits.
-- [`tests/src/server/validators.test.ts`](../../tests/src/server/validators.test.ts) —
+- [`tests/src/server/validators.test.ts`](../tests/src/server/validators.test.ts) —
   the total `isReply` guard over valid success/failure envelopes, foreign ids, malformed
   or incomplete envelopes, non-records, hostile getters, and stray messages.
-- [`tests/src/server/serve.test.ts`](../../tests/src/server/serve.test.ts) —
+- [`tests/src/server/handlers.test.ts`](../tests/src/server/handlers.test.ts) —
   `serveWorker` driven MANUALLY over a raw `node:worker_threads` thread (post a run/abort
   envelope, await the reply): reply correlation remaining distinct from the stable execution id,
   missing / non-string job ids plus revoked proxies and throwing job getters invoking no handler
@@ -514,7 +518,7 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
   then `handler` once across two real jobs, failing before the handler read when the input
   getter throws, and the main-thread no-op reading neither option.
 - The worker fixtures under
-  [`tests/src/server/fixtures`](../../tests/src/server/fixtures) (`double` / `fail` /
+  [`tests/src/server/fixtures`](../tests/src/server/fixtures) (`double` / `fail` /
   `slow` / `bad-result` / `abortable` / `crash` / `identify` / `execution` / `identity` /
   `echo-data` / `sum` /
   `stray` / `malformed` / `throw-async` / `load-throw` / `echo` / `noncloneable-result` /
@@ -538,6 +542,6 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
 - [`contract.md`](contract.md) — the `Guard<T>` / shape vocabulary threaded through the
   structured-clone boundary (`input` / `result` on `createNodeWorker`).
 - [`database.md`](database.md) — the storage layer `createJSONQueueStore` builds on.
-- [`AGENTS.md`](../../AGENTS.md) — the rules; §10 lifecycle, §4.1 single-word members,
+- [`AGENTS.md`](../AGENTS.md) — the rules; §10 lifecycle, §4.1 single-word members,
   §13 emitter pattern, §22 documentation-as-contracts.
-- [`README.md`](../README.md) — the guides index.
+- [`README.md`](README.md) — the guides index.

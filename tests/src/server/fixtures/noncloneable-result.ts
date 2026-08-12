@@ -1,6 +1,6 @@
 // A real worker-thread script whose negative-input result cannot be structured-cloned.
 // A later non-negative input returns a clone-safe number on the same thread.
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 serveWorker({
 	input: (value: unknown): value is number => {

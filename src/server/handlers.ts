@@ -1,50 +1,14 @@
 import type { ServeWorkerOptions } from './types.js'
 import { parentPort } from 'node:worker_threads'
 
-// The worker-side entry. SELF-CONTAINED by necessity: this module loads as RAW `.ts`
-// inside a spawned thread (Node ≥ 23.6 type-stripping), so it imports ONLY
+// The worker-side request handler. SELF-CONTAINED by necessity: this module loads as RAW
+// `.ts` inside a spawned thread (Node ≥ 23.6 type-stripping), so it imports ONLY
 // `node:worker_threads` at runtime — no `@src/*`, no `.js`-relative value imports (the
 // only non-node import is the type-only `ServeWorkerOptions`, fully erased at runtime).
-// Its guards are inlined for the same reason. A worker script that needs the cloned
-// `workerData` reads it directly from `node:worker_threads` (it is in a thread already).
-
-// Inlined record guard (do NOT import `isRecord` from `@src/core` — see above). Total:
-// adversarial input returns `false`, never throws (AGENTS §14).
-function isRecord(value: unknown): value is Record<string, unknown> {
-	try {
-		return typeof value === 'object' && value !== null && !Array.isArray(value)
-	} catch {
-		return false
-	}
-}
-
-// Narrow an inbound message to a `run` envelope: `id` is the per-dispatch correlation,
-// while `job` is the stable Queue execution id exposed to the handler. Both are required;
-// a legacy or malformed envelope without a string `job` fails closed without a reply.
-function isRun(
-	value: unknown,
-): value is { readonly id: string; readonly job: string; readonly input: unknown } {
-	try {
-		return (
-			isRecord(value) &&
-			typeof value.id === 'string' &&
-			typeof value.job === 'string' &&
-			value.command === 'run' &&
-			'input' in value
-		)
-	} catch {
-		return false
-	}
-}
-
-// Narrow an inbound message to an `abort` envelope (a string `id` + an `'abort'` command).
-function isAbort(value: unknown): value is { readonly id: string } {
-	try {
-		return isRecord(value) && typeof value.id === 'string' && value.command === 'abort'
-	} catch {
-		return false
-	}
-}
+// The inbound envelope is therefore narrowed inline rather than through a sibling guard in
+// `validators.ts`, which would be a runtime import this module cannot make. A worker script
+// that needs the cloned `workerData` reads it directly from `node:worker_threads` (it is in
+// a thread already).
 
 /**
  * Register a worker-thread handler — the worker-side half of {@link createNodeWorker}.
@@ -88,25 +52,52 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 	const handler = options.handler
 	const controllers = new Map<string, AbortController>()
 	port.on('message', (raw: unknown) => {
-		if (isAbort(raw)) {
-			controllers.get(raw.id)?.abort()
+		// Read the envelope's four fields once, defensively. A hostile message can be a revoked
+		// proxy or carry a throwing getter, so every property access sits inside this one guard:
+		// a read that throws leaves the envelope unrecognised and the message is dropped without
+		// a reply, exactly as a malformed envelope is.
+		let command: unknown
+		let correlation: unknown
+		let job: unknown
+		let payload: unknown
+		let carried = false
+		try {
+			if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+				if ('command' in raw) command = raw.command
+				if ('id' in raw) correlation = raw.id
+				if ('job' in raw) job = raw.job
+				if ('input' in raw) {
+					payload = raw.input
+					carried = true
+				}
+			}
+		} catch {
 			return
 		}
-		if (!isRun(raw)) return
-		const id = raw.id
+		if (typeof correlation !== 'string') return
+		const id = correlation
+		if (command === 'abort') {
+			controllers.get(id)?.abort()
+			return
+		}
+		// A `run` envelope carries BOTH ids: `id` is the per-dispatch correlation, `job` the
+		// stable Queue execution id handed to the handler. A legacy or malformed envelope
+		// without a string `job`, or without an `input` at all, fails closed with no reply.
+		if (command !== 'run' || typeof job !== 'string' || !carried) return
+		const execution = job
+		const value = payload
 		const controller = new AbortController()
 		controllers.set(id, controller)
 		void Promise.resolve()
 			.then(() => {
-				if (!input(raw.input)) {
+				if (!input(value)) {
 					throw new Error('input did not satisfy input guard')
 				}
-				const value = raw.input
-				return handler(value, { id: raw.job, signal: controller.signal })
+				return handler(value, { id: execution, signal: controller.signal })
 			})
-			.then((value) => {
+			.then((result) => {
 				controllers.delete(id)
-				port.postMessage({ id, ok: true, value })
+				port.postMessage({ id, ok: true, value: result })
 			})
 			.catch((error: unknown) => {
 				controllers.delete(id)

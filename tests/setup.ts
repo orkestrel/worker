@@ -74,7 +74,7 @@ export class TestQueueStore<TInput> implements QueueStoreInterface<TInput> {
 		this.#entries.delete(id)
 	}
 
-	load(): Promise<readonly StoredEntry<TInput>[]> {
+	load(): Promise<ReadonlyArray<StoredEntry<TInput>>> {
 		return Promise.resolve([...this.#entries.values()])
 	}
 

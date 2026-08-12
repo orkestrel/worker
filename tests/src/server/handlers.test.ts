@@ -4,7 +4,7 @@ import { serveWorker } from '@src/server'
 import { createRecorder, createTeardown, waitForDelay } from '../../setup.js'
 import { postRun, ThreadReply } from '../../setupServer.js'
 
-// src/server/serve.ts — the worker-side `serveWorker` entry, driven MANUALLY
+// src/server/handlers.ts — the worker-side `serveWorker` entry, driven MANUALLY
 // (no createNodeWorker): a raw `node:worker_threads` thread over a serve fixture, posting
 // run/abort envelopes and awaiting the reply. Proves the protocol contract directly — a
 // success envelope, an input-guard rejection envelope, and a cooperative abort firing the

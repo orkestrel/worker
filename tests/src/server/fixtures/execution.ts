@@ -1,7 +1,7 @@
 // A real worker-thread script exposing the Queue execution id received by `serveWorker`.
 import { getEventListeners } from 'node:events'
 import { parentPort, workerData } from 'node:worker_threads'
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 class ThrowingRun {
 	readonly id = 'hostile-job'

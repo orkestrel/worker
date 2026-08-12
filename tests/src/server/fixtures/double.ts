@@ -1,6 +1,6 @@
 // A real worker-thread script loaded natively by Node's type-stripping. Imports
 // `serveWorker` by relative-to-source path because aliases do not resolve in a raw thread.
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 // Doubles a number. The hand-written guard narrows the inbound payload with no `as`.
 serveWorker({

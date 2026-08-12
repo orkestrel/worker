@@ -1,5 +1,5 @@
 // A real worker-thread script.
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 // Returns a STRING although the main side's `result` guard expects a number — proves a
 // reply that fails the result guard rejects the job (the zero-`as` boundary in action).

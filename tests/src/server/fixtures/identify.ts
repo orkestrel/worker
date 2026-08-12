@@ -1,6 +1,6 @@
 // A real worker-thread script.
 import { threadId } from 'node:worker_threads'
-import { serveWorker } from '../../../../src/server/serve.ts'
+import { serveWorker } from '../../../../src/server/handlers.ts'
 
 // Echoes the thread's OWN `threadId` (read straight from `node:worker_threads`, since the
 // handler runs inside the thread). A test counts the distinct ids across many jobs to prove

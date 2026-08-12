@@ -24,13 +24,6 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url))
 const WALK_DIRS = ['src', 'guides', 'tests']
 const SELF_SPECIFIERS = ['@orkestrel/worker', '@src/core', '@src/server']
 
-// AGENTS §5 runtime-self-contained exception: a worker-thread entry cannot import
-// from @src/core or siblings, so serve.ts deliberately inlines its non-exported guards.
-// Exempt it from the hidden-declaration gate (the guards are implementation detail, not
-// surface). `SurfaceSymbol` (Source.hidden()'s return shape) carries no file attribution
-// — only `{ name, kind }` — so the exemption filters by the known declaration names.
-const HIDDEN_EXEMPT = ['isAbort', 'isRecord', 'isRun'] // src/server/serve.ts
-
 // The coding-law gate requires every matching implementation class declaration to carry
 // `export`, while these orchestration classes are intentionally absent from src/server/index.ts
 // and therefore are not package exports. Source exports have no file/barrel attribution, so
@@ -111,8 +104,7 @@ for (const entry of manifest) {
 		})
 
 		it('exposes no hidden module-scope declarations', () => {
-			const hidden = source.hidden().filter((symbol) => !HIDDEN_EXEMPT.includes(symbol.name))
-			expect(hidden.map(symbolKey)).toEqual([])
+			expect(source.hidden().map(symbolKey)).toEqual([])
 		})
 
 		for (const group of guide.methods()) {
