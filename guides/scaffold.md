@@ -1012,15 +1012,31 @@ nothing. This is deliberate: a generated sample entity is repeatedly mistaken fo
 implementation. What a consumer does first is write the module's `types.ts`, then the
 implementation that conforms to it, then export both from the barrel — the order `AGENTS.md` fixes.
 
-**A writing verb refuses a workspace whose manifest names a Vitest project the plan does not
-register.** The refusal names the project and stops the whole call, so `--groups` does not narrow
-past it. Two shapes reach it. One is a workspace carrying a service project: `services` is not
-reconstructed, as Reading a target states, so a target shipping `scripts/service.sh` and a
-`test:service` script plans a configuration without that project and refuses. The other is a
-workspace carrying a project this package models no field for at all, such as a protocol-conformance
-project. Reading verbs are unaffected — `audit` reports drift on both — so the supported route is to
-compare with `audit` and reconcile the configuration by hand. Removing the script that names the
-project is the other way through, and it removes the capability with it.
+**`services` stops at the script and never reaches a Vitest project, so a workspace that drives a
+live service cannot be written.** The project set a plan registers is fixed: the environment
+projects the axes select, plus `policy`, `config`, `probe`, and `guides`. `Blueprint.services`
+carries the service names and emits `scripts/service.sh`, the service inventory — and stops there.
+Nothing registers a project that runs against what the script starts.
+
+`.claude/rules/workspace.md` calls a live-service project the fifth kind and names it for the
+service it drives, so this is a field built halfway rather than a concept the package declines to
+have. The consequence is a refusal: a workspace whose manifest names that project gets "the manifest
+names a Vitest project the planned configuration does not register" from every writing verb, because
+the plan omits what the manifest names. The refusal is raised before group selection, so `--groups`
+does not narrow past it.
+
+Two fleet packages sit here, and they are one case rather than two. `@orkestrel/ollama` drives a
+real Ollama through a `service` project; `@orkestrel/mcp` drives its server with
+`@modelcontextprotocol/conformance` through a `conformance` project — the specification's own
+runner, fetched at run time and deliberately not a dependency, so the package proves compatibility
+without taking on the coupling. Both are the fifth kind, and both are named for what they drive.
+Neither folds into `integration`, which means something narrower: the built package works when
+installed and driven from outside.
+
+Reading verbs are unaffected, so the route through is to reconcile against `audit`, which reports
+byte-level drift per path, and to hand-merge the one configuration file that carries the project.
+Deleting the script that names the project is the other way through, and it deletes the capability
+with it.
 
 ## Tests
 

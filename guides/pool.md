@@ -230,19 +230,19 @@ await pool.destroy()
 
 ## Tests
 
-- [`tests/src/core/Pool.test.ts`](../../tests/src/core/Pool.test.ts) — canonical behavior:
+- [`tests/src/core/Pool.test.ts`](../tests/src/core/Pool.test.ts) — canonical behavior:
   validation, hostile errors, duplicate ownership, transitional counts, overlapping FIFO
   hooks, create continuation, abort boundaries, exclusive invalid-cleanup waiter ownership,
   bounded and unbounded replacement, destroy-observer reentry ordering, concurrent clear,
   stable reentrant destruction, late resources, aggregate failures, emitter ordering, and high
   contention.
-- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — factory
+- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — factory
   construction and instance identity only.
-- [`tests/guides.test.ts`](../../tests/guides.test.ts) — source/export,
+- [`tests/guides.test.ts`](../tests/guides.test.ts) — source/export,
   method, example, import, and link parity.
 
 ## See also
 
 - [`emitter.md`](emitter.md) — the installed observation primitive.
-- [`AGENTS.md`](../../AGENTS.md) — repository coding and lifecycle rules.
-- [`README.md`](../README.md) — guide manifest.
+- [`AGENTS.md`](../AGENTS.md) — repository coding and lifecycle rules.
+- [`README.md`](README.md) — guide manifest.
