@@ -11,7 +11,8 @@ import {
 import { MemoryQueueStore } from '@orkestrel/queue'
 import { fileURLToPath } from 'node:url'
 import { createNodeWorker, dispatch, spawnThread } from '@src/server'
-import { createGate, createTeardown, waitForDelay } from '../../setup.js'
+import { waitForDelay } from '@orkestrel/test'
+import { createGate, createTeardown } from '../../setup.js'
 
 // src/server/helpers.ts — the main-side worker-thread machinery (`spawnThread` /
 // `dispatch`) `createNodeWorker` composes over. The round-trip suites below

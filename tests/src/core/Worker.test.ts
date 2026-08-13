@@ -4,16 +4,15 @@ import { stringShape } from '@orkestrel/contract'
 import { isPoolError } from '@orkestrel/pool'
 import { createMemoryQueueStore, isQueueError } from '@orkestrel/queue'
 import { Worker } from '@src/core'
+import { createRecorder, waitForDelay } from '@orkestrel/test'
 import {
 	createErrorRecorder,
 	createGate,
-	createRecorder,
 	createResourceFactory,
 	createTeardown,
 	PoolOptionsProbe,
 	recordEmitterEvents,
 	TestQueueStore,
-	waitForDelay,
 } from '../../setup.js'
 
 const { track } = createTeardown(

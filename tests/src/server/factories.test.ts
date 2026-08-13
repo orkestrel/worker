@@ -13,7 +13,8 @@ import {
 } from '@orkestrel/contract'
 import { createMemoryQueueStore } from '@orkestrel/queue'
 import { createJSONQueueStore, createNodeWorker } from '@src/server'
-import { createRecorder, createTeardown } from '../../setup.js'
+import { createRecorder } from '@orkestrel/test'
+import { createTeardown } from '../../setup.js'
 import { NodeWorkerOptionsProbe, tempDatabasePath } from '../../setupServer.js'
 
 // src/server/factories.ts — createJSONQueueStore over a real JSON file (node

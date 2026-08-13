@@ -3,7 +3,7 @@
 // never in `setup.ts` (AGENTS §16.1).
 
 import type { NodeWorkerOptions } from '@src/server'
-import type { TestRecorderInterface } from './setup.js'
+import type { RecorderInterface } from '@orkestrel/test'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,13 +30,11 @@ export function tempDatabasePath(): { readonly path: string; readonly cleanup: (
 /** Getter-backed Node worker options whose property reads are recorded. */
 export class NodeWorkerOptionsProbe<TInput, TResult> implements NodeWorkerOptions<TInput, TResult> {
 	#values: Required<NodeWorkerOptions<TInput, TResult>>
-	readonly #reads: TestRecorderInterface<
-		readonly [property: keyof NodeWorkerOptions<TInput, TResult>]
-	>
+	readonly #reads: RecorderInterface<readonly [property: keyof NodeWorkerOptions<TInput, TResult>]>
 
 	constructor(
 		values: Required<NodeWorkerOptions<TInput, TResult>>,
-		reads: TestRecorderInterface<readonly [property: keyof NodeWorkerOptions<TInput, TResult>]>,
+		reads: RecorderInterface<readonly [property: keyof NodeWorkerOptions<TInput, TResult>]>,
 	) {
 		this.#values = values
 		this.#reads = reads

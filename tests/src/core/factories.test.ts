@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createWorker } from '@src/core'
-import { createRecorder } from '../../setup.js'
+import { createRecorder } from '@orkestrel/test'
 
 // src/core/factories.ts — createWorker wires up a working, typed interface end to end
 // (AGENTS §16). createQueue / createPool / createDatabaseQueueStore / createMemoryQueueStore

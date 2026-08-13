@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { Worker as ThreadWorker } from 'node:worker_threads'
 import { serveWorker } from '@src/server'
-import { createRecorder, createTeardown, waitForDelay } from '../../setup.js'
+import { createRecorder, waitForDelay } from '@orkestrel/test'
+import { createTeardown } from '../../setup.js'
 import { postRun, ThreadReply } from '../../setupServer.js'
 
 // src/server/handlers.ts — the worker-side `serveWorker` entry, driven MANUALLY
