@@ -5,25 +5,24 @@
 import type { NodeWorkerOptions } from '@src/server'
 import type { RecorderInterface } from '@orkestrel/test'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isRecord } from '@orkestrel/contract'
+import { createScratch } from '@orkestrel/test/server'
 
 /** Post one valid raw run envelope to a real worker thread. */
 export function postRun(thread: ThreadWorker, id: string, job: string, input: unknown): void {
 	thread.postMessage({ id, job, command: 'run', input })
 }
 
-// A fresh on-disk JSON-store path under the OS temp dir, with a `cleanup` thunk
-// that removes its directory. Used by the `createJSONQueueStore` tests, which need
-// real file persistence across a store reopen. Call `cleanup` in `afterEach` so no
-// temp file leaks (AGENTS §16.1).
+// A fresh on-disk JSON-store path under an owned scratch directory, with a `cleanup`
+// thunk that removes it. Used by the `createJSONQueueStore` tests, which need real
+// file persistence across a store reopen. Call `cleanup` in `afterEach` so no temp
+// file leaks (AGENTS §16.1).
 export function tempDatabasePath(): { readonly path: string; readonly cleanup: () => void } {
-	const directory = mkdtempSync(join(tmpdir(), 'worker-store-'))
+	const scratch = createScratch({ prefix: 'worker-store-' })
 	return {
-		path: join(directory, 'store.json'),
-		cleanup: () => rmSync(directory, { recursive: true, force: true }),
+		path: join(scratch.path, 'store.json'),
+		cleanup: () => scratch.destroy(),
 	}
 }
 
