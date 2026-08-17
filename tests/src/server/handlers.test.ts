@@ -1,8 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { Worker as ThreadWorker } from 'node:worker_threads'
 import { serveWorker } from '@src/server'
-import { createRecorder, waitForDelay } from '@orkestrel/test'
-import { createTeardown } from '../../setup.js'
+import { createRecorder, createTeardown, waitForDelay } from '@orkestrel/test'
 import { postRun, ThreadReply } from '../../setupServer.js'
 
 // src/server/handlers.ts — the worker-side `serveWorker` entry, driven MANUALLY
@@ -16,9 +15,15 @@ const fixture = (name: string): URL => new URL(`./fixtures/${name}`, import.meta
 // Track every spawned thread so it is terminated in afterEach even when an assertion throws — the
 // shared §16.1 teardown registrar (the disposer terminates a raw worker thread; its
 // `Promise<number>` exit code is awaited as a plain settle, the value discarded).
-const { track } = createTeardown(async (thread: ThreadWorker) => {
-	await thread.terminate()
-})
+const teardown = createTeardown()
+afterEach(() => teardown.destroy())
+
+function track(thread: ThreadWorker): ThreadWorker {
+	teardown.add(async () => {
+		await thread.terminate()
+	})
+	return thread
+}
 
 function spawn(name: string): ThreadWorker {
 	return track(new ThreadWorker(fixture(name)))

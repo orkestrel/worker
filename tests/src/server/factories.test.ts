@@ -1,5 +1,5 @@
 import type { NodeWorkerOptions } from '@src/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
 	integerShape,
 	isBoolean,
@@ -13,8 +13,7 @@ import {
 } from '@orkestrel/contract'
 import { createMemoryQueueStore } from '@orkestrel/queue'
 import { createJSONQueueStore, createNodeWorker } from '@src/server'
-import { createRecorder } from '@orkestrel/test'
-import { createTeardown } from '../../setup.js'
+import { createRecorder, createTeardown } from '@orkestrel/test'
 import { NodeWorkerOptionsProbe, tempDatabasePath } from '../../setupServer.js'
 
 // src/server/factories.ts — createJSONQueueStore over a real JSON file (node
@@ -23,12 +22,13 @@ import { NodeWorkerOptionsProbe, tempDatabasePath } from '../../setupServer.js'
 // SECOND store built over the SAME path — exactly how a queue resumes after a restart.
 
 // Track each temp-dir `cleanup` thunk so it runs in afterEach even when an assertion throws — the
-// shared §16.1 teardown registrar (the disposer just invokes the cleanup thunk).
-const { track } = createTeardown((cleanup: () => void) => cleanup())
+// shared §16.1 teardown registrar.
+const teardown = createTeardown()
+afterEach(() => teardown.destroy())
 describe('createJSONQueueStore', () => {
 	it('persists outstanding entries across store instances over the same file', async () => {
 		const { path, cleanup } = tempDatabasePath()
-		track(cleanup)
+		teardown.add(cleanup)
 
 		const writer = createJSONQueueStore(path, stringShape())
 		await writer.save({ id: 'job-1', input: 'https://example.com', attempts: 0 })
@@ -44,7 +44,7 @@ describe('createJSONQueueStore', () => {
 
 	it('round-trips a nested-object input through the JSON file', async () => {
 		const { path, cleanup } = tempDatabasePath()
-		track(cleanup)
+		teardown.add(cleanup)
 
 		const writer = createJSONQueueStore(
 			path,
@@ -68,7 +68,7 @@ describe('createJSONQueueStore', () => {
 
 	it('reflects a removed entry across a reopen', async () => {
 		const { path, cleanup } = tempDatabasePath()
-		track(cleanup)
+		teardown.add(cleanup)
 
 		const writer = createJSONQueueStore(path, stringShape())
 		await writer.save({ id: 'a', input: 'a', attempts: 0 })

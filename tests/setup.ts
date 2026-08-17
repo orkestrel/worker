@@ -3,7 +3,6 @@ import type { PoolOptions } from '@orkestrel/pool'
 import type { QueueStoreInterface, StoredEntry } from '@orkestrel/queue'
 import type { RecorderInterface } from '@orkestrel/test'
 import { createRecorder } from '@orkestrel/test'
-import { afterEach } from 'vitest'
 
 // ── Environment-agnostic base setup (AGENTS §16.1) ────────────────────────────
 //
@@ -12,26 +11,6 @@ import { afterEach } from 'vitest'
 //
 // The fleet-wide helpers live in `@orkestrel/test`. What remains here is what is
 // specific to this package.
-
-/** A manually-settled promise — the `resolve` / `reject` lifted out of its executor. */
-export interface TestGateInterface<T> {
-	readonly promise: Promise<T>
-	readonly resolve: (value: T) => void
-	readonly reject: (error: unknown) => void
-}
-
-/**
- * Create a {@link TestGateInterface} — a deferred whose `promise` settles only when
- * the test calls `resolve` / `reject`. Lets a test gate a real handler on a signal it
- * controls, to prove ordering / concurrency / pause behaviour without racing wall-clock
- * timers (AGENTS §16.1).
- *
- * @typeParam T - The value the gate's `promise` resolves with
- * @returns A gate exposing its `promise` and its `resolve` / `reject`
- */
-export function createGate<T = void>(): TestGateInterface<T> {
-	return Promise.withResolvers<T>()
-}
 
 /** Optional protocol hooks for {@link TestQueueStore}. */
 export interface TestQueueStoreHooks<TInput> {
@@ -75,47 +54,6 @@ export class TestQueueStore<TInput> implements QueueStoreInterface<TInput> {
 	async clear(): Promise<void> {
 		await this.#hooks.clear?.()
 		this.#entries.clear()
-	}
-}
-
-/** A tracked-resource teardown registrar — see {@link createTeardown}. */
-export interface TeardownInterface<T> {
-	/** Register `item` for disposal at `afterEach`, returning it for inline use. */
-	track<U extends T>(item: U): U
-}
-
-/**
- * Create a {@link TeardownInterface} that disposes every tracked item after each test.
- *
- * @remarks
- * The registrar owns one `afterEach` barrier, runs every caller-supplied disposer, and
- * reports one failure by identity or several in an ordered `AggregateError`. It is
- * host-independent: the caller decides whether disposal means destroying an entity,
- * terminating a thread, or cleaning a temporary resource.
- *
- * @typeParam T - The kind of item tracked
- * @param dispose - How to dispose one tracked item; asynchronous cleanup is awaited
- * @returns A registrar whose `track` enrolls an item and returns it
- */
-export function createTeardown<T>(
-	dispose: (item: T) => void | Promise<void>,
-): TeardownInterface<T> {
-	const tracked: T[] = []
-	afterEach(async () => {
-		const tasks = tracked.splice(0).map((item) => Promise.resolve().then(() => dispose(item)))
-		const settlements = await Promise.allSettled(tasks)
-		const failures: unknown[] = []
-		for (const settlement of settlements) {
-			if (settlement.status === 'rejected') failures.push(settlement.reason)
-		}
-		if (failures.length === 1) throw failures[0]
-		if (failures.length > 1) throw new AggregateError(failures, 'test teardown failed')
-	})
-	return {
-		track(item) {
-			tracked.push(item)
-			return item
-		},
 	}
 }
 
@@ -165,20 +103,6 @@ export class PoolOptionsProbe<T> implements PoolOptions<T> {
 	replace(values: Required<PoolOptions<T>>): void {
 		this.#values = values
 	}
-}
-
-/**
- * Create a recorder for an {@link import('@orkestrel/emitter').EmitterErrorHandler} — the
- * emitter's own listener-error channel (AGENTS §13): a `RecorderInterface<[error, event]>`
- * whose `handler` is wired as the `error` option, so an emit-safety test asserts a buggy
- * listener's throw was routed here (with the offending event name) instead of corrupting the
- * entity. Argument order is `(error, event)`, matching `EmitterErrorHandler`. A thin alias over
- * {@link createRecorder} (AGENTS §16.1 — extract-once over the per-entity emit-safety blocks).
- *
- * @returns A recorder of `[error: unknown, event: string]` calls
- */
-export function createErrorRecorder(): RecorderInterface<readonly [error: unknown, event: string]> {
-	return createRecorder<readonly [error: unknown, event: string]>()
 }
 
 /** A recorder per named event of an {@link EmitterInterface}, keyed by event name. */
@@ -279,10 +203,4 @@ export function createResourceFactory(): ResourceFactoryInterface {
 		created,
 		destroyed,
 	}
-}
-
-/** Whether a repository-relative Vue SFC path belongs to the private browser application. */
-export function isBrowserVuePath(path: string): boolean {
-	const normalized = path.replaceAll('\\', '/')
-	return normalized.startsWith('app/browser/')
 }

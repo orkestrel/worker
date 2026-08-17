@@ -1,24 +1,29 @@
 import type { PoolOptions } from '@orkestrel/pool'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { stringShape } from '@orkestrel/contract'
 import { isPoolError } from '@orkestrel/pool'
 import { createMemoryQueueStore, isQueueError } from '@orkestrel/queue'
 import { Worker } from '@src/core'
-import { createRecorder, waitForDelay } from '@orkestrel/test'
+import { createRecorder, createTeardown, waitForDelay } from '@orkestrel/test'
 import {
-	createErrorRecorder,
-	createGate,
 	createResourceFactory,
-	createTeardown,
 	PoolOptionsProbe,
 	recordEmitterEvents,
 	TestQueueStore,
 } from '../../setup.js'
 
-const { track } = createTeardown(
-	(worker: { readonly emitter: { readonly destroyed: boolean }; destroy(): Promise<void> }) =>
-		worker.emitter.destroyed ? undefined : worker.destroy(),
-)
+type DestroyableWorker = {
+	readonly emitter: { readonly destroyed: boolean }
+	destroy(): Promise<void>
+}
+
+const teardown = createTeardown()
+afterEach(() => teardown.destroy())
+
+function track<T extends DestroyableWorker>(worker: T): T {
+	teardown.add(() => (worker.emitter.destroyed ? undefined : worker.destroy()))
+	return worker
+}
 
 // src/core/workers/Worker.ts — the Queue⨉Pool facade. Real behaviour, no mocks: a
 // counting `create` hook proves resources are reused and never exceed the pool max,
@@ -168,8 +173,8 @@ describe('Worker constructor option boundaries', () => {
 
 	it('defaults explicit undefined concurrency and pool max and executes real jobs', async () => {
 		const { create, created } = createResourceFactory()
-		const first = createGate()
-		const second = createGate()
+		const first = Promise.withResolvers<void>()
+		const second = Promise.withResolvers<void>()
 		const pool = { create }
 		Object.defineProperty(pool, 'max', { enumerable: true, value: undefined })
 		const options = {
@@ -209,14 +214,14 @@ describe('Worker constructor option boundaries', () => {
 		const laterCreate = createRecorder<[]>()
 		const initialSuccess = createRecorder<[string, number]>()
 		const laterSuccess = createRecorder<[string, number]>()
-		const initialErrors = createErrorRecorder()
-		const laterErrors = createErrorRecorder()
+		const initialErrors = createRecorder<readonly [error: unknown, event: string]>()
+		const laterErrors = createRecorder<readonly [error: unknown, event: string]>()
 		const initialSaves = createRecorder<[]>()
 		const laterSaves = createRecorder<[]>()
 		const initialStore = new TestQueueStore<number>({ save: () => initialSaves.handler() })
 		const laterStore = new TestQueueStore<number>({ save: () => laterSaves.handler() })
-		const first = createGate()
-		const second = createGate()
+		const first = Promise.withResolvers<void>()
+		const second = Promise.withResolvers<void>()
 		const listenerFailure = new Error('volatile listener failed')
 		let concurrencyReads = 0
 		let handlerReads = 0
@@ -360,12 +365,12 @@ describe('Worker constructor option boundaries', () => {
 		const destroyed = createRecorder<[number]>()
 		const validated = createRecorder<[number]>()
 		const events = createRecorder<[string]>()
-		const errors = createErrorRecorder()
+		const errors = createRecorder<readonly [error: unknown, event: string]>()
 		const laterCreated = createRecorder<[]>()
 		const laterDestroyed = createRecorder<[number]>()
 		const laterValidated = createRecorder<[number]>()
 		const laterEvents = createRecorder<[string]>()
-		const laterErrors = createErrorRecorder()
+		const laterErrors = createRecorder<readonly [error: unknown, event: string]>()
 		const listenerFailure = new Error('pool listener failed')
 		const initial: Required<PoolOptions<number>> = {
 			max: 1,
@@ -438,10 +443,10 @@ describe('Worker constructor option boundaries', () => {
 describe('Worker — resource reuse + the pool cap', () => {
 	it('reuses resources across jobs and never creates more than the pool max', async () => {
 		const { create, created } = createResourceFactory()
-		const first = createGate()
-		const second = createGate()
-		const third = createGate()
-		const fourth = createGate()
+		const first = Promise.withResolvers<void>()
+		const second = Promise.withResolvers<void>()
+		const third = Promise.withResolvers<void>()
+		const fourth = Promise.withResolvers<void>()
 		const gates = [first, second, third, fourth]
 		const worker = new Worker<number, number, void>({
 			concurrency: 2,
@@ -530,7 +535,7 @@ describe('Worker — lifecycle delegation', () => {
 	})
 
 	it('abort rejects pending work and fires the in-flight handler signal', async () => {
-		const gate = createGate()
+		const gate = Promise.withResolvers<void>()
 		const fired = createRecorder<[]>()
 		const worker = new Worker<string, number, void>({
 			concurrency: 1,
@@ -582,7 +587,7 @@ describe('Worker — lifecycle delegation', () => {
 	})
 
 	it('clear drops pending entries while the in-flight job runs on', async () => {
-		const gate = createGate<number>()
+		const gate = Promise.withResolvers<number>()
 		const worker = new Worker<number, number, number>({
 			concurrency: 1,
 			pool: { create: () => 0 },
@@ -612,7 +617,7 @@ describe('Worker — lifecycle delegation', () => {
 describe('Worker — a signal-ignoring handler keeps its resource leased', () => {
 	it('frees the queue slot on timeout while the resource stays held, then reuses it once the handler settles', async () => {
 		const { create, created } = createResourceFactory()
-		const gate = createGate()
+		const gate = Promise.withResolvers<void>()
 		const started = createRecorder<[number]>()
 		const worker = new Worker<number, number, void>({
 			concurrency: 1, // pool max defaults to 1 — one resource at a time
@@ -685,8 +690,8 @@ describe('Worker — destroy tears down the pool', () => {
 	})
 
 	it('waits for queue cleanup before destroying the pool and worker emitter', async () => {
-		const cleanup = createGate()
-		const removing = createGate()
+		const cleanup = Promise.withResolvers<void>()
+		const removing = Promise.withResolvers<void>()
 		const order = createRecorder<[string]>()
 		const store = new TestQueueStore<undefined>({
 			remove: async () => {
@@ -725,8 +730,8 @@ describe('Worker — destroy tears down the pool', () => {
 	})
 
 	it('preserves one queue cleanup failure by identity', async () => {
-		const cleanup = createGate()
-		const removing = createGate()
+		const cleanup = Promise.withResolvers<void>()
+		const removing = Promise.withResolvers<void>()
 		const removals = createRecorder<[string]>()
 		const failure = new Error('queue cleanup failed')
 		const store = new TestQueueStore<undefined>({
@@ -766,11 +771,11 @@ describe('Worker — destroy tears down the pool', () => {
 	})
 
 	it('aggregates queue then pool cleanup failures and destroys the emitter last', async () => {
-		const queueCleanup = createGate()
-		const queueRemoving = createGate()
+		const queueCleanup = Promise.withResolvers<void>()
+		const queueRemoving = Promise.withResolvers<void>()
 		const queueRemovals = createRecorder<[string]>()
-		const poolCleanup = createGate()
-		const poolRemoving = createGate()
+		const poolCleanup = Promise.withResolvers<void>()
+		const poolRemoving = Promise.withResolvers<void>()
 		const gateSettlement = Promise.allSettled([queueCleanup.promise, poolCleanup.promise])
 		const queueFailure = new Error('queue cleanup failed')
 		const poolFailure = new Error('pool cleanup failed')
@@ -862,8 +867,8 @@ describe('Worker — destroy tears down the pool', () => {
 	})
 
 	it('keeps its emitter alive until the pool cleanup barrier settles', async () => {
-		const cleanup = createGate()
-		const entered = createGate()
+		const cleanup = Promise.withResolvers<void>()
+		const entered = Promise.withResolvers<void>()
 		const order = createRecorder<[string]>()
 		const worker = new Worker<undefined, number, void>({
 			pool: {
@@ -1056,10 +1061,10 @@ describe('Worker — failing jobs release resources (no pool starvation)', () =>
 describe('Worker — pool max vs queue concurrency mismatch', () => {
 	it('caps real parallelism at the smaller pool max (resource is the bottleneck)', async () => {
 		const { create, created } = createResourceFactory()
-		const first = createGate()
-		const second = createGate()
-		const third = createGate()
-		const fourth = createGate()
+		const first = Promise.withResolvers<void>()
+		const second = Promise.withResolvers<void>()
+		const third = Promise.withResolvers<void>()
+		const fourth = Promise.withResolvers<void>()
 		const gates = [first, second, third, fourth]
 		let liveHandlers = 0
 		let peakHandlers = 0
@@ -1112,8 +1117,8 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 
 	it('uses at most `concurrency` resources when pool max exceeds concurrency', async () => {
 		const { create, created } = createResourceFactory()
-		const first = createGate()
-		const second = createGate()
+		const first = Promise.withResolvers<void>()
+		const second = Promise.withResolvers<void>()
 		const gates = [first, second]
 		// concurrency 2 but pool max 10 — the queue caps parallelism at 2, so only two
 		// resources are ever created; the extra pool capacity goes unused.
@@ -1292,7 +1297,7 @@ describe('Worker — emitter (push observation surface)', () => {
 		const thrown = new Error('worker observer blew up')
 		const { create, created } = createResourceFactory()
 		const ran = createRecorder<[number]>()
-		const errors = createErrorRecorder()
+		const errors = createRecorder<readonly [error: unknown, event: string]>()
 		const worker = new Worker<number, number, number>({
 			concurrency: 2,
 			pool: { create },

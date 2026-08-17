@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
 	arrayOf,
 	isBoolean,
@@ -11,8 +11,7 @@ import {
 import { MemoryQueueStore } from '@orkestrel/queue'
 import { fileURLToPath } from 'node:url'
 import { createNodeWorker, dispatch, spawnThread } from '@src/server'
-import { waitForDelay } from '@orkestrel/test'
-import { createGate, createTeardown } from '../../setup.js'
+import { createTeardown, waitForDelay } from '@orkestrel/test'
 
 // src/server/helpers.ts — the main-side worker-thread machinery (`spawnThread` /
 // `dispatch`) `createNodeWorker` composes over. The round-trip suites below
@@ -41,7 +40,13 @@ const isNumberArray = arrayOf(isNumber)
 const fixture = (name: string): URL => new URL(`./fixtures/${name}`, import.meta.url)
 
 // Track every worker so it is destroyed even when an assertion throws.
-const { track } = createTeardown((worker: { destroy(): Promise<void> }) => worker.destroy())
+const teardown = createTeardown()
+afterEach(() => teardown.destroy())
+
+function track<T extends { destroy(): Promise<void> }>(worker: T): T {
+	teardown.add(() => worker.destroy())
+	return worker
+}
 
 describe('createNodeWorker — round-trip over a thread', () => {
 	it('dispatches the input to a thread and resolves the narrowed reply', async () => {
@@ -149,7 +154,7 @@ describe('createNodeWorker — stable Queue execution identity', () => {
 				store,
 			}),
 		)
-		const handled = createGate<{ readonly id: string; readonly result: string }>()
+		const handled = Promise.withResolvers<{ readonly id: string; readonly result: string }>()
 		worker.emitter.on('success', (id, result) => handled.resolve({ id, result }))
 		await worker.restore()
 		await expect(handled.promise).resolves.toEqual({
