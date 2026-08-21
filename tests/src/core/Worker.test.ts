@@ -1,16 +1,18 @@
 import type { PoolOptions } from '@orkestrel/pool'
+import type { WorkerEventMap } from '@src/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { stringShape } from '@orkestrel/contract'
 import { isPoolError } from '@orkestrel/pool'
 import { createMemoryQueueStore, isQueueError } from '@orkestrel/queue'
 import { Worker } from '@src/core'
-import { createRecorder, createTeardown, waitForDelay } from '@orkestrel/test'
 import {
+	createRecorder,
+	createRecorders,
 	createResourceFactory,
-	PoolOptionsProbe,
-	recordEmitterEvents,
-	TestQueueStore,
-} from '../../setup.js'
+	createTeardown,
+	waitForDelay,
+} from '@orkestrel/test'
+import { PoolOptionsProbe, TestQueueStore } from '../../setup.js'
 
 type DestroyableWorker = {
 	readonly emitter: { readonly destroyed: boolean }
@@ -34,7 +36,7 @@ function track<T extends DestroyableWorker>(worker: T): T {
 // handlers never starving the pool, the pool-max-vs-queue-concurrency mismatch (real
 // parallelism = min(concurrency, pool.max), in both directions), and destroy mid-flight
 // tearing down queue AND pool together (in-flight aborted, pending rejected, every
-// pooled resource destroyed). The shared `createResourceFactory` (tests/setup.ts) hands
+// pooled resource destroyed). The shared `createResourceFactory` (`@orkestrel/test`) hands
 // out the monotonically-numbered resources plus its `created` / `destroyed` recorders.
 
 describe('Worker — runs the handler with a pooled resource', () => {
@@ -634,7 +636,7 @@ describe('Worker — a signal-ignoring handler keeps its resource leased', () =>
 
 		// Job A times out (it ignores the signal): the attempt rejects and the queue slot
 		// frees — but A's handler is still blocked on the gate, so its `finally` has not run
-		// and the leased resource (resource 0) is NOT yet released back to the pool.
+		// and the leased resource (the first resource) is NOT yet released back to the pool.
 		const a = worker.enqueue(0)
 		const aSettlement = Promise.allSettled([a])
 		let b: Promise<void> | undefined
@@ -642,10 +644,10 @@ describe('Worker — a signal-ignoring handler keeps its resource leased', () =>
 		try {
 			await expect(a).rejects.toThrow('attempt timed out')
 			expect(worker.active).toBe(0) // the queue slot is free again
-			expect(created.count).toBe(1) // resource 0 was created and is still leased
+			expect(created.count).toBe(1) // the first resource was created and is still leased
 
 			// Job B claims the freed slot and tries to acquire — but the pool is at max with
-			// nothing idle (resource 0 is still held by A), so B PARKS on the pool. B opts out
+			// nothing idle (the first resource is still held by A), so B PARKS on the pool. B opts out
 			// of the deadline (`timeout: 0`) so it waits for the resource rather than timing out.
 			b = worker.enqueue(1, { timeout: 0 })
 			bSettlement = Promise.allSettled([b])
@@ -653,13 +655,13 @@ describe('Worker — a signal-ignoring handler keeps its resource leased', () =>
 			expect(started.calls).toEqual([[0]]) // only A ever started; B is blocked on acquire
 			expect(created.count).toBe(1) // still no second resource — B did not create one
 
-			// Release the gate: A's handler finally settles, its `finally` releases resource 0,
+			// Release the gate: A's handler finally settles, its `finally` releases that first resource,
 			// and the pool hands that same resource (FIFO) to B's parked acquire — reused, not
 			// recreated.
 			gate.resolve()
 			await b
 			expect(started.calls).toEqual([[0], [1]]) // B ran after the resource came free
-			expect(created.count).toBe(1) // B reused resource 0 — no new create
+			expect(created.count).toBe(1) // B reused the first resource — no new create
 		} finally {
 			gate.resolve()
 			await aSettlement
@@ -841,10 +843,10 @@ describe('Worker — destroy tears down the pool', () => {
 	})
 
 	it('aborts in-flight work and awaits pooled-resource destruction', async () => {
-		const { create, destroyed } = createResourceFactory()
+		const { create, destroy, destroyed } = createResourceFactory()
 		const worker = new Worker<undefined, number, void>({
 			concurrency: 1,
-			pool: { create, destroy: (value) => destroyed.handler(value) },
+			pool: { create, destroy },
 			// A cooperative handler that unwinds on its signal, so the `finally` releases
 			// the resource into the (now-destroyed) pool, which destroys it.
 			handler: (_input, _resource, execution) =>
@@ -1161,12 +1163,12 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 
 describe('Worker — destroy mid-flight tears down queue and pool together', () => {
 	it('aborts in-flight, rejects pending, and destroys every pooled resource', async () => {
-		const { create, created, destroyed } = createResourceFactory()
+		const { create, created, destroy, destroyed } = createResourceFactory()
 		// Cooperative handlers that unwind on their signal so the `finally` releases the
 		// resource into the destroyed pool (which then destroys it).
 		const worker = new Worker<number, number, void>({
 			concurrency: 2,
-			pool: { create, destroy: (value) => destroyed.handler(value) },
+			pool: { create, destroy },
 			handler: (_input, _resource, execution) =>
 				new Promise<void>((_resolve, reject) => {
 					execution.signal.addEventListener('abort', () => reject(execution.signal.reason), {
@@ -1207,7 +1209,7 @@ describe('Worker — destroy mid-flight tears down queue and pool together', () 
 // balanced), yet the `error` handler fires.
 
 // The WorkerEventMap event names recorded across the emitter tests — fed to the shared
-// `recordEmitterEvents` (AGENTS §16.1: the per-event wiring is centralized; this file
+// `createRecorders` (AGENTS §16.1: the per-event wiring is centralized; this file
 // keeps only the names its scenarios observe).
 const WORKER_EVENTS: readonly [
 	'enqueue',
@@ -1219,6 +1221,12 @@ const WORKER_EVENTS: readonly [
 	'drain',
 ] = ['enqueue', 'start', 'retry', 'success', 'failure', 'abort', 'drain']
 
+// `createRecorders` reaches its event map only through the generic `on` of
+// `EventSourceInterface`, which yields no inference candidate, so its map type falls back to
+// the constraint and rejects a `WorkerEventMap` emitter. Each call therefore names both type
+// arguments, and this alias carries the recorded-name union so only the result type varies.
+type WorkerEvent = (typeof WORKER_EVENTS)[number]
+
 describe('Worker — emitter (push observation surface)', () => {
 	it('re-exposes the queue lifecycle: enqueue → start → success → drain with the job result', async () => {
 		const worker = new Worker<number, number, string>({
@@ -1226,7 +1234,10 @@ describe('Worker — emitter (push observation surface)', () => {
 			handler: (input, resource) => `${input}:${resource}`,
 		})
 		track(worker)
-		const events = recordEmitterEvents(worker.emitter, WORKER_EVENTS)
+		const events = createRecorders<WorkerEventMap<string>, WorkerEvent>(
+			worker.emitter,
+			WORKER_EVENTS,
+		)
 		const result = await worker.enqueue(3, { id: 'job-1' })
 		expect(result).toBe('3:7')
 		await waitForDelay(0)
@@ -1248,7 +1259,7 @@ describe('Worker — emitter (push observation surface)', () => {
 			},
 		})
 		track(worker)
-		const events = recordEmitterEvents(worker.emitter, WORKER_EVENTS)
+		const events = createRecorders<WorkerEventMap<void>, WorkerEvent>(worker.emitter, WORKER_EVENTS)
 		await expect(worker.enqueue(undefined, { id: 'doomed' })).rejects.toThrow('always fails')
 		expect(events.start.calls).toEqual([['doomed']])
 		expect(events.retry.calls).toEqual([['doomed', 1]])
@@ -1268,7 +1279,7 @@ describe('Worker — emitter (push observation surface)', () => {
 				}),
 		})
 		track(worker)
-		const events = recordEmitterEvents(worker.emitter, WORKER_EVENTS)
+		const events = createRecorders<WorkerEventMap<void>, WorkerEvent>(worker.emitter, WORKER_EVENTS)
 		const running = worker.enqueue('inflight', { id: 'a' })
 		await waitForDelay(10)
 		const reason = new Error('stop')
