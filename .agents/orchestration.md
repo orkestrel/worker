@@ -881,7 +881,12 @@ once per round with one procedure, publish each layer in one window, and only th
   so the step-local reading reports nothing moved while the manifest surface did. A re-pinned
   runtime range is published surface: without the bump a consumer installs duplicate copies of the
   moved dependency.
-- A dist built before the version bump is the release artifact; the bump edits no emitted byte.
+- A dist built before the version bump is the release artifact wherever the bump edits no emitted
+  byte. Check that per package rather than assuming it: a package that imports its own
+  `package.json` version into published code emits that version, so its pre-bump dist is stale the
+  moment the version moves. Rebuild after the bump there, and pack from the rebuilt tree. Because
+  `npm publish --ignore-scripts` skips `prepack`, that rebuild is the operator's step, not the
+  publish's.
 - Refresh the registry evidence between layers and derive each round's pins from it. A pin can only
   name a version the registry already serves, so a dependency shipping in the same window keeps the
   resolvable previous pin and takes its dev-only re-pin after the window closes.
