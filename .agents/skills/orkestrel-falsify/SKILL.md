@@ -32,6 +32,10 @@ A round also needs something new to attack. When the previous round's claims all
 been added or repaired since, and the only motive is that an auditor could still imagine an attack,
 there is no subject — closing is the correct action and the next subject is the deliverable.
 
+When the same class has recurred along one seam to the budget in `.claude/rules/quality.md`
+§ Rounds and verdicts, the next move is that law's strategy switch — the breadth sweep of the
+stream, the ruling, or the dropped moving-target claim — rather than another successor round.
+
 ## Write the brief
 
 The brief is the instrument. A weak brief produces a confirming review no matter which auditor reads

@@ -227,9 +227,13 @@ Import `createScratch` from `@orkestrel/test/server` when a proof needs real fil
 ```ts
 interface ScratchInterface {
 	readonly path: string
-	write(target: string, text: string): void
+	write(target: string, text: string): string
 	read(target: string): string | undefined
-	exists(target: string): boolean
+	has(target: string): boolean
+	names(target?: string): readonly string[]
+	ensure(target: string): string
+	link(target: string, source: string): string
+	remove(target: string): void
 	destroy(): void
 }
 ```

@@ -211,6 +211,13 @@ Every role honours this floor. No dispatch may widen it.
   same class of defect through a new door, the search is following the frame rather than the
   defect. Bound the scope, then fan out independent lenses over disjoint slices in one pass.
   Parallelism is worth more here for the framing it breaks than for the wall-clock it saves.
+- When the recurring class has a direction — each fix relocates it along one stream: a dependency
+  chain, a data path, a call chain — the source sits elsewhere on that stream, and deepening the
+  current station cannot reach it. Switch from depth to breadth: fan probes over the stream's
+  stations in parallel, blind and clean-contexted, as far up and down as the stream runs, to locate
+  the source. Then plan downstream from the source with the sweep's map of how far the defect
+  reaches, so the remaining work carries a measured bound instead of an open count of rounds. The
+  seam budget in `.claude/rules/quality.md` § Rounds and verdicts states when this fires.
 - The subjective and objective lanes are the adversarial pass's FLOOR, not its shape. Where a
   subject has more seams than that pass can attack, fan out one lens per seam over disjoint slices,
   keep every lens blind and

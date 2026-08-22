@@ -12,6 +12,7 @@ export interface PolicyExpression extends PolicyNode {
 	readonly key?: PolicyExpression
 	readonly id?: unknown
 	readonly method?: boolean
+	readonly kind?: 'get' | 'init' | 'set'
 	readonly expression?: boolean
 	readonly object?: PolicyExpression
 	readonly property?: PolicyExpression
@@ -122,7 +123,9 @@ export function isPolicyMethod(node: PolicyExpression): boolean {
 	return (
 		node.type === 'FunctionExpression' &&
 		parent?.value === node &&
-		(parent.type === 'MethodDefinition' || (parent.type === 'Property' && parent.method === true))
+		(parent.type === 'MethodDefinition' ||
+			(parent.type === 'Property' &&
+				(parent.method === true || parent.kind === 'get' || parent.kind === 'set')))
 	)
 }
 
