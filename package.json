@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/worker",
-	"version": "0.0.9",
+	"version": "0.0.10",
 	"description": "A typed, resource-backed job worker for the @orkestrel line — a Queue paired with a Pool over an execution seam, plus a node:worker_threads server surface for CPU-parallel jobs. Part of the @orkestrel line.",
 	"keywords": [
 		"async",
@@ -86,12 +86,12 @@
 		"@orkestrel/contract": "^0.0.13",
 		"@orkestrel/database": "^0.0.12",
 		"@orkestrel/emitter": "^0.0.8",
-		"@orkestrel/pool": "^0.0.8",
-		"@orkestrel/queue": "^0.0.10"
+		"@orkestrel/pool": "^0.0.9",
+		"@orkestrel/queue": "^0.0.11"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.59.0",
-		"@orkestrel/guide": "^0.0.14",
+		"@orkestrel/guide": "^0.0.15",
 		"@orkestrel/probe": "^0.0.9",
 		"@orkestrel/scaffold": "^0.0.57",
 		"@orkestrel/test": "^0.0.11",
