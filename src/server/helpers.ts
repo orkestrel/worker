@@ -1,6 +1,7 @@
 import type { QueueExecution } from '@orkestrel/queue'
 import type { Guard } from '@orkestrel/contract'
-import type { NodeThread } from './types.js'
+import type { NodeThread, Reply } from './types.js'
+import { attempt, isRecord } from '@orkestrel/contract'
 import { Dispatch } from './Dispatch.js'
 import { Thread } from './Thread.js'
 
@@ -73,4 +74,27 @@ export function dispatch<TResult>(
 	result: Guard<TResult>,
 ): Promise<TResult> {
 	return new Dispatch(thread, input, execution, result).promise
+}
+
+/**
+ * Narrow an inbound `message` to a {@link Reply} for a given job `id` — no assertion.
+ *
+ * @remarks
+ * A total predicate: a record whose `id` matches and whose `ok` discriminant is well-formed.
+ * Anything else is rejected so a dispatch listener can ignore foreign or malformed messages.
+ * It correlates against the `id` argument rather than narrowing one value alone, so it is a
+ * correlated predicate rather than a `Guard<Reply>` and is not accepted where a `Guard` is.
+ *
+ * @param value - The inbound message to narrow
+ * @param id - The job id a matching reply must carry
+ * @returns `true` when the value is this job's well-formed reply
+ */
+export function isReply(value: unknown, id: string): value is Reply {
+	const outcome = attempt(() => {
+		if (!isRecord(value)) return false
+		if (value.id !== id) return false
+		if (value.ok === true) return 'value' in value
+		return value.ok === false && typeof value.error === 'string'
+	})
+	return outcome.success && outcome.value
 }

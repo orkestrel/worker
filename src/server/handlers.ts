@@ -6,7 +6,7 @@ import { parentPort } from 'node:worker_threads'
 // `node:worker_threads` at runtime — no `@src/*`, no `.js`-relative value imports (the
 // only non-node import is the type-only `ServeWorkerOptions`, fully erased at runtime).
 // The inbound envelope is therefore narrowed inline rather than through a sibling guard in
-// `validators.ts`, which would be a runtime import this module cannot make. A worker script
+// `helpers.ts`, which would be a runtime import this module cannot make. A worker script
 // that needs the cloned `workerData` reads it directly from `node:worker_threads` (it is in
 // a thread already).
 

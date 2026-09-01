@@ -3,8 +3,8 @@ import type { Guard } from '@orkestrel/contract'
 import type { NodeThread } from './types.js'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
 import { attempt, isRecord } from '@orkestrel/contract'
+import { isReply } from './helpers.js'
 import { Thread } from './Thread.js'
-import { isReply } from './validators.js'
 
 /**
  * Internal lifecycle entity for one dispatched worker-thread job.

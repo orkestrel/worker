@@ -10,11 +10,11 @@ import {
 } from '@orkestrel/contract'
 import { MemoryQueueStore } from '@orkestrel/queue'
 import { fileURLToPath } from 'node:url'
-import { createNodeWorker, dispatch, spawnThread } from '@src/server'
+import { createNodeWorker, dispatch, isReply, spawnThread } from '@src/server'
 import { createTeardown, waitForDelay } from '@orkestrel/test'
 
 // src/server/helpers.ts — the main-side worker-thread machinery (`spawnThread` /
-// `dispatch`) `createNodeWorker` composes over. The round-trip suites below
+// `dispatch` / `isReply`) `createNodeWorker` composes over. The round-trip suites below
 // drive `createNodeWorker` over REAL worker threads (no mocking; the node `src:server`
 // project), exercising `spawnThread` + `dispatch` END TO END — each stands up a worker
 // against a real fixture script, drives
@@ -718,5 +718,84 @@ describe('fixture path resolves inside a thread', () => {
 		// A guard on the fixture URL itself — the round-trip tests above are the real proof
 		// the relative `serveWorker` import resolves when Node loads the script in a thread.
 		expect(fileURLToPath(fixture('double.ts'))).toContain('fixtures')
+	})
+})
+
+describe('isReply — the reply-envelope predicate dispatch filters on', () => {
+	const id = 'job-1'
+
+	it('accepts a well-formed success reply for the id (any value, including falsy)', () => {
+		expect(isReply({ id, ok: true, value: 42 }, id)).toBe(true)
+		expect(isReply({ id, ok: true, value: 0 }, id)).toBe(true)
+		expect(isReply({ id, ok: true, value: undefined }, id)).toBe(true)
+		expect(isReply({ id, ok: true, value: null }, id)).toBe(true)
+	})
+
+	it('accepts a well-formed failure reply for the id (string error)', () => {
+		expect(isReply({ id, ok: false, error: 'boom' }, id)).toBe(true)
+	})
+
+	it('rejects a success envelope without its required value', () => {
+		expect(isReply({ id, ok: true }, id)).toBe(false)
+	})
+
+	it('rejects a reply whose id does not match (a foreign job)', () => {
+		expect(isReply({ id: 'other', ok: true, value: 1 }, id)).toBe(false)
+		expect(isReply({ id: 'other', ok: false, error: 'x' }, id)).toBe(false)
+	})
+
+	it('rejects a failure whose error is not a string (malformed payload)', () => {
+		expect(isReply({ id, ok: false, error: 7 }, id)).toBe(false)
+		expect(isReply({ id, ok: false }, id)).toBe(false)
+	})
+
+	it('rejects a malformed ok discriminant (neither true nor false)', () => {
+		expect(isReply({ id, ok: 'yes', value: 1 }, id)).toBe(false)
+		expect(isReply({ id, value: 1 }, id)).toBe(false)
+	})
+
+	it('rejects non-records and stray messages (no id) — total, never throws', () => {
+		expect(isReply(null, id)).toBe(false)
+		expect(isReply(undefined, id)).toBe(false)
+		expect(isReply('reply', id)).toBe(false)
+		expect(isReply(42, id)).toBe(false)
+		expect(isReply([id], id)).toBe(false)
+		expect(isReply({ ok: true, value: 1 }, id)).toBe(false)
+	})
+
+	it('contains hostile property getters and returns false', () => {
+		expect(
+			isReply(
+				{
+					get id(): string {
+						throw new Error('hostile id')
+					},
+				},
+				id,
+			),
+		).toBe(false)
+		expect(
+			isReply(
+				{
+					id,
+					get ok(): boolean {
+						throw new Error('hostile ok')
+					},
+				},
+				id,
+			),
+		).toBe(false)
+		expect(
+			isReply(
+				{
+					id,
+					ok: false,
+					get error(): string {
+						throw new Error('hostile error')
+					},
+				},
+				id,
+			),
+		).toBe(false)
 	})
 })

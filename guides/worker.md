@@ -73,7 +73,7 @@ const thread = await spawnThread(new URL('./double.ts', import.meta.url), undefi
 const controller = new AbortController()
 try {
 	const result = await dispatch(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
-	// `isReply` is the total guard `dispatch` uses internally to filter replies by job id.
+	// `isReply` is the total predicate `dispatch` uses internally to filter replies by job id.
 } finally {
 	await thread.worker.terminate()
 }
@@ -83,7 +83,7 @@ try {
 | ------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
 | `spawnThread` | function | Spawn one worker thread and resolve a live `NodeThread` once it comes `online` (a death before `online` rejects). |
 | `dispatch`    | function | Post a job to a leased `NodeThread` and await its reply, narrowed through its result guard.                       |
-| `isReply`     | function | Narrow an inbound message to a `Reply` for a job id (total guard) — `dispatch`'s filter.                          |
+| `isReply`     | function | Narrow an inbound message to a `Reply` for a job id (total, correlated) — `dispatch`'s filter.                    |
 
 ### Entities
 
@@ -498,10 +498,9 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
   rejecting without wedging the worker; `messageerror` listener attachment and settlement
   cleanup; `destroy` with multiple threads mid-job terminating
   all; rapid enqueue/abort churn settling every job with no thread leak; and `destroy`
-  terminating every thread so the process exits.
-- [`tests/src/server/validators.test.ts`](../tests/src/server/validators.test.ts) —
-  the total `isReply` guard over valid success/failure envelopes, foreign ids, malformed
-  or incomplete envelopes, non-records, hostile getters, and stray messages.
+  terminating every thread so the process exits. Plus the total `isReply` predicate over
+  valid success/failure envelopes, foreign ids, malformed or incomplete envelopes,
+  non-records, hostile getters, and stray messages.
 - [`tests/src/server/handlers.test.ts`](../tests/src/server/handlers.test.ts) —
   `serveWorker` driven MANUALLY over a raw `node:worker_threads` thread (post a run/abort
   envelope, await the reply): reply correlation remaining distinct from the stable execution id,
