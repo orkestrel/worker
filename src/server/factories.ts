@@ -7,7 +7,7 @@ import { createDatabaseQueueStore } from '@orkestrel/queue'
 import { NodeWorker } from './NodeWorker.js'
 
 /**
- * Create a persistent JSON-file {@link QueueStoreInterface} — the core
+ * Creates a persistent JSON-file {@link QueueStoreInterface} — the core
  * `createDatabaseQueueStore` over a server {@link createJSONDriver}.
  *
  * @remarks
@@ -44,7 +44,7 @@ export function createJSONQueueStore<TInput extends ContractShape>(
 }
 
 /**
- * Create a CPU-parallel worker over `node:worker_threads` — a thin specialization of the
+ * Creates a CPU-parallel worker over `node:worker_threads` — a thin specialization of the
  * core `createWorker` whose pooled resource is a worker THREAD.
  *
  * @remarks

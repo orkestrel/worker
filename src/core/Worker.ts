@@ -6,8 +6,8 @@ import { Pool } from '@orkestrel/pool'
 import { Queue } from '@orkestrel/queue'
 
 /**
- * A resource-backed job worker — a thin facade composing a `Queue` (`@orkestrel/queue`)
- * with a `Pool` (`@orkestrel/pool`).
+ * Represents a resource-backed job worker — a thin facade composing a `Queue`
+ * (`@orkestrel/queue`) with a `Pool` (`@orkestrel/pool`).
  *
  * @remarks
  * - **Composition, not reimplementation.** The Worker owns a `Pool` (built from

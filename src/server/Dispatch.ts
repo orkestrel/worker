@@ -7,7 +7,7 @@ import { isReply } from './helpers.js'
 import { Thread } from './Thread.js'
 
 /**
- * Internal lifecycle entity for one dispatched worker-thread job.
+ * Represents the internal lifecycle entity for one dispatched worker-thread job.
  *
  * @remarks
  * Owns stable `message` / `messageerror` / death listener identities, settlement, result-guard

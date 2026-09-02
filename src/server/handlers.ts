@@ -11,7 +11,7 @@ import { parentPort } from 'node:worker_threads'
 // a thread already).
 
 /**
- * Register a worker-thread handler — the worker-side half of {@link createNodeWorker}.
+ * Registers a worker-thread handler — the worker-side half of {@link createNodeWorker}.
  *
  * @remarks
  * Must be the spawned thread's module entry. It listens on the parent port for the

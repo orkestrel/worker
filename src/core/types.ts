@@ -3,7 +3,7 @@ import type { PoolOptions } from '@orkestrel/pool'
 import type { QueueEntryOptions, QueueExecution, QueueStoreInterface } from '@orkestrel/queue'
 
 /**
- * The push observation surface of a {@link WorkerInterface} (AGENTS §13) — the job
+ * Represents the push observation surface of a {@link WorkerInterface} (AGENTS §13) — the job
  * lifecycle a fire-and-forget observer subscribes to, surfacing the underlying queue's
  * moments so a Worker consumer never reaches through to the internal `Queue`.
  *
@@ -21,19 +21,19 @@ import type { QueueEntryOptions, QueueExecution, QueueStoreInterface } from '@or
  * Declared as a `type` alias (§4.5).
  */
 export type WorkerEventMap<TResult> = {
-	/** A job was accepted — its id (delegated from the underlying queue's `enqueue`). */
+	/** Fires when a job is accepted — its id (delegated from the underlying queue's `enqueue`). */
 	readonly enqueue: readonly [id: string]
-	/** A job's attempt began running — its id. */
+	/** Fires when a job's attempt begins running — its id. */
 	readonly start: readonly [id: string]
-	/** A failed job attempt is being retried — its id + the next (1-based) attempt index. */
+	/** Fires when a failed job attempt is being retried — its id + the next (1-based) attempt index. */
 	readonly retry: readonly [id: string, attempt: number]
-	/** A job settled successfully — its id + the resolved result. */
+	/** Fires when a job settles successfully — its id + the resolved result. */
 	readonly success: readonly [id: string, result: TResult]
-	/** A job settled with a terminal failure — its id + the error. */
+	/** Fires when a job settles with a terminal failure — its id + the error. */
 	readonly failure: readonly [id: string, error: unknown]
-	/** The worker was aborted — the queue's coded abort error retaining the caller reason. */
+	/** Fires when the worker is aborted — the queue's coded abort error retaining the caller reason. */
 	readonly abort: readonly [reason: unknown]
-	/** The worker went idle — no pending jobs and none in flight. */
+	/** Fires when the worker goes idle — no pending jobs and none in flight. */
 	readonly drain: readonly []
 }
 
@@ -45,7 +45,7 @@ export type WorkerHandler<TInput, TResource, TResult> = (
 ) => Promise<TResult> | TResult
 
 /**
- * Options for `createWorker`.
+ * Configures `createWorker`.
  *
  * @remarks
  * - `handler` — runs each job against an acquired pool resource; rejecting triggers a
@@ -64,19 +64,19 @@ export type WorkerHandler<TInput, TResource, TResult> = (
  */
 export interface WorkerOptions<TInput, TResource, TResult> {
 	readonly on?: EmitterHooks<WorkerEventMap<TResult>>
-	/** The emitter's listener-error handler (AGENTS §13) — a listener throw routes here, not to a domain event. */
+	/** Holds the emitter's listener-error handler (AGENTS §13) — a listener throw routes here, not to a domain event. */
 	readonly error?: EmitterErrorHandler
 	readonly handler: WorkerHandler<TInput, TResource, TResult>
 	readonly pool: PoolOptions<TResource>
 	readonly concurrency?: number
 	readonly retries?: number
-	/** Integer milliseconds in `0..2_147_483_647`; `0` disables the per-attempt deadline. */
+	/** Holds integer milliseconds in `0..2_147_483_647`; `0` disables the per-attempt deadline. */
 	readonly timeout?: number
 	readonly store?: QueueStoreInterface<TInput>
 }
 
 /**
- * A resource-backed job worker — a Queue whose handler runs against a pooled resource.
+ * Represents a resource-backed job worker — a Queue whose handler runs against a pooled resource.
  *
  * @remarks
  * Exposes a typed {@link emitter} (AGENTS §13) carrying the job lifecycle
@@ -92,24 +92,24 @@ export interface WorkerInterface<TInput, TResult> {
 	readonly paused: boolean
 	readonly stopped: boolean
 	enqueue(input: TInput, options?: QueueEntryOptions): Promise<TResult>
-	/** Re-enqueue outstanding entries loaded from the store; no-op without a store. */
+	/** Re-enqueues outstanding entries loaded from the store; no-op without a store. */
 	restore(): Promise<void>
 	start(): void
-	/** Stop the queue and await current-loop and durable cleanup quiescence. */
+	/** Stops the queue and awaits current-loop and durable cleanup quiescence. */
 	stop(): Promise<void>
 	pause(): void
 	resume(): void
 	/**
-	 * Cancel in-flight work, reject pending work, and await queue-owned cleanup.
+	 * Cancels in-flight work, rejects pending work, and awaits queue-owned cleanup.
 	 *
 	 * @param reason - Optional cause retained by the queue's coded abort error
 	 * @returns The underlying queue's stable abort barrier
 	 */
 	abort(reason?: unknown): Promise<void>
-	/** Drop pending work and await its durable cleanup. */
+	/** Drops pending work and awaits its durable cleanup. */
 	clear(): Promise<void>
 	/**
-	 * Tear down the queue, then the pool, and finally the worker emitter.
+	 * Tears down the queue, then the pool, and finally the worker emitter.
 	 *
 	 * @returns One stable barrier shared by every call; it rejects with the original sole
 	 *   cleanup failure or an ordered `AggregateError` when both queue and pool fail

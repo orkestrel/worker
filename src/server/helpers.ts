@@ -14,7 +14,7 @@ import { Thread } from './Thread.js'
 // narrow the envelopes' opaque `unknown` payloads with no assertion (AGENTS §14).
 
 /**
- * Spawn one worker thread and resolve a live {@link NodeThread} once it comes online.
+ * Spawns one worker thread and resolves a live {@link NodeThread} once it comes online.
  *
  * @remarks
  * Constructs the thread with the `script` module and the cloned `workerData`, then
@@ -39,7 +39,7 @@ export function spawnThread(script: string | URL, workerData: unknown): Promise<
 }
 
 /**
- * Dispatch one job to a leased {@link NodeThread} and await its narrowed reply.
+ * Dispatches one job to a leased {@link NodeThread} and awaits its narrowed reply.
  *
  * @remarks
  * Mints a fresh per-dispatch correlation `id`, posts it with `job: execution.id`, and
@@ -77,7 +77,7 @@ export function dispatch<TResult>(
 }
 
 /**
- * Narrow an inbound `message` to a {@link Reply} for a given job `id` — no assertion.
+ * Narrows an inbound `message` to a {@link Reply} for a given job `id` — no assertion.
  *
  * @remarks
  * A total predicate: a record whose `id` matches and whose `ok` discriminant is well-formed.
@@ -87,7 +87,7 @@ export function dispatch<TResult>(
  *
  * @param value - The inbound message to narrow
  * @param id - The job id a matching reply must carry
- * @returns `true` when the value is this job's well-formed reply
+ * @returns True if the value is this job's well-formed reply; false otherwise
  */
 export function isReply(value: unknown, id: string): value is Reply {
 	const outcome = attempt(() => {

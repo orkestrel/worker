@@ -2,7 +2,8 @@ import type { NodeThread } from './types.js'
 import { Worker as ThreadWorker } from 'node:worker_threads'
 
 /**
- * Internal mutable implementation of the readonly {@link NodeThread} observation contract.
+ * Represents the internal mutable implementation of the readonly {@link NodeThread} observation
+ * contract.
  *
  * @remarks
  * Liveness and the first terminal error live behind runtime-private fields. Thread `error`,

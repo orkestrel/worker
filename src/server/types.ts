@@ -3,7 +3,7 @@ import type { QueueExecution, QueueStoreInterface } from '@orkestrel/queue'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
 
 /**
- * A thread→main reply envelope — a success carrying an opaque `value`, or a failure with a
+ * Represents a thread→main reply envelope — a success carrying an opaque `value`, or a failure with a
  * message — part of the internal wire protocol `createNodeWorker` posts and `serveWorker`
  * answers.
  *
@@ -21,7 +21,7 @@ export type Reply =
 	| { readonly id: string; readonly ok: false; readonly error: string }
 
 /**
- * A live worker thread plus its latched liveness state — the pooled resource a
+ * Represents a live worker thread plus its latched liveness state — the pooled resource a
  * {@link createNodeWorker} leases per job.
  *
  * @remarks
@@ -44,7 +44,7 @@ export interface NodeThread {
 }
 
 /**
- * Options for `createNodeWorker` — a CPU-parallel worker over `node:worker_threads`.
+ * Configures `createNodeWorker` — a CPU-parallel worker over `node:worker_threads`.
  *
  * @remarks
  * - `script` — the worker module each pooled thread runs; its module must call
@@ -80,7 +80,7 @@ export interface NodeWorkerOptions<TInput, TResult> {
 }
 
 /**
- * Options for `serveWorker` — the worker-side entry a thread script registers.
+ * Configures `serveWorker` — the worker-side entry a thread script registers.
  *
  * @remarks
  * - `input` — narrows each inbound payload inside the thread; an invalid payload replies

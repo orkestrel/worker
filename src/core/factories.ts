@@ -2,7 +2,7 @@ import type { WorkerInterface, WorkerOptions } from './types.js'
 import { Worker } from './Worker.js'
 
 /**
- * Create a resource-backed job worker — a `Queue` (`@orkestrel/queue`) marrying a `Pool`
+ * Creates a resource-backed job worker — a `Queue` (`@orkestrel/queue`) marrying a `Pool`
  * (`@orkestrel/pool`). Each enqueued input runs through the handler against an
  * automatically acquired pooled resource (released when the job settles), with the
  * queue's bounded concurrency, retries, and per-attempt timeout / abort.

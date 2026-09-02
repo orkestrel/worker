@@ -7,7 +7,7 @@ import { attempt } from '@orkestrel/contract'
 import { dispatch, spawnThread } from './helpers.js'
 
 /**
- * Internal composition entity backing {@link createNodeWorker}.
+ * Represents the internal composition entity backing {@link createNodeWorker}.
  *
  * @remarks
  * Supplies bound Pool and Queue operations without nested function assignments. The resulting
