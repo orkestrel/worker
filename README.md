@@ -68,7 +68,7 @@ await worker.destroy()
 
 For the full surface — the `Worker` facade, `createNodeWorker` / `serveWorker`,
 the durable `createJSONQueueStore`, the observable `emitter`, and usage
-patterns — see [`guides/src/worker.md`](guides/src/worker.md).
+patterns — see [`guides/worker.md`](guides/worker.md).
 
 ## Package
 
