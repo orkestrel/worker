@@ -55,11 +55,11 @@ try {
 | API                | Kind      | Summary                                                          |
 | ------------------ | --------- | ---------------------------------------------------------------- |
 | `PoolCode`         | type      | `invalid`, `destroyed`, `create`, or `cleanup`.                  |
-| `PoolContext`      | interface | Rejected input or distinct aggregate-cleanup failures.           |
+| `PoolContext`      | interface | Rejected input or distinct aggregate destroy-hook failures.      |
 | `PoolErrorOptions` | interface | Code, optional cause, and optional context for `PoolError`.      |
 | `PoolEventMap`     | type      | `create`, `acquire`, `release`, and `destroy` lifecycle signals. |
 | `PoolToken`        | interface | A unique lease with readonly `value` and idempotent `release()`. |
-| `PoolOptions`      | interface | Create, cleanup, validation, capacity, and emitter options.      |
+| `PoolOptions`      | interface | Create, destroy, validation, capacity, and emitter options.      |
 | `PoolInterface`    | interface | Count/emitter properties plus `acquire`, `clear`, and `destroy`. |
 
 `PoolInterface.emitter`, `size`, `idle`, and `active` are readonly data properties.
@@ -70,13 +70,24 @@ of `size`.
 
 ## Methods
 
-The public methods of `PoolInterface`; `Pool` implements this list exactly.
+The public call-signature members of `PoolInterface` and `PoolToken`; `Pool` implements the
+`PoolInterface` list exactly.
+
+#### `PoolInterface`
 
 | Method    | Returns                 | Behavior                                                                                  |
 | --------- | ----------------------- | ----------------------------------------------------------------------------------------- |
 | `acquire` | `Promise<PoolToken<T>>` | Queue in FIFO order, validate or create, then settle in the same order; accepts a signal. |
 | `clear`   | `Promise<void>`         | Claim and clean only the records idle in this call's synchronous snapshot.                |
 | `destroy` | `Promise<void>`         | Enter terminal state and return the exact stable promise for complete teardown.           |
+
+#### `PoolToken`
+
+The lease returned by `acquire`, with the one operation that returns its record.
+
+| Method    | Returns | Behavior                                                                                                              |
+| --------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
+| `release` | `void`  | Returns this exact record to the pool once; a repeat call and a call after teardown transferred ownership are no-ops. |
 
 ## Contract
 
@@ -232,10 +243,12 @@ await pool.destroy()
 
 - [`tests/src/core/Pool.test.ts`](../tests/src/core/Pool.test.ts) — canonical behavior:
   validation, hostile errors, duplicate ownership, transitional counts, overlapping FIFO
-  hooks, create continuation, abort boundaries, exclusive invalid-cleanup waiter ownership,
-  bounded and unbounded replacement, destroy-observer reentry ordering, concurrent clear,
-  stable reentrant destruction, late resources, aggregate failures, emitter ordering, and high
-  contention.
+  hooks, create continuation, abort boundaries, abort-listener detachment, exclusive
+  invalid-cleanup waiter ownership, bounded and unbounded replacement, destroy-observer
+  reentry ordering, concurrent clear, stable reentrant destruction, late resources,
+  aggregate failures, emitter ordering, and high contention.
+- [`tests/src/core/validators.test.ts`](../tests/src/core/validators.test.ts) — the public
+  boundary guards alone: accepted and rejected maxima, and native versus hostile signals.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — factory
   construction and instance identity only.
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — source/export,
