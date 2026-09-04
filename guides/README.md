@@ -1,14 +1,18 @@
 # Guides
 
-A dual-axis index into this repository's guides — by concept, and by directory (AGENTS §22).
+A dual-axis index into this repository's guides — by concept, and by directory.
 
 ## By concept
+
+Each concept this repository documents, with its spec, source, and tests:
 
 | Concept | Spec                     | Source                                                   | Tests                                                                            |
 | ------- | ------------------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | Worker  | [`worker.md`](worker.md) | [`src/core`](../src/core), [`src/server`](../src/server) | [`tests/src/core`](../tests/src/core), [`tests/src/server`](../tests/src/server) |
 
 ## By directory
+
+Each source directory and the guide that documents it:
 
 | Directory    | Guide                    |
 | ------------ | ------------------------ |
@@ -59,7 +63,3 @@ suite (`tests/guides.test.ts`). It documents **that package's**
 surface (`Guide` / `Source`, the manifest and comparison helpers), not
 anything sourced in this repo; it is kept here so a reader of the parity suite
 can see the primitives it is built from without leaving this guide set.
-
-## See also
-
-- [`AGENTS.md`](../AGENTS.md) — the rules; §22 documentation-as-contracts.

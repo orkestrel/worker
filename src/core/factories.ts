@@ -8,8 +8,8 @@ import { Worker } from './Worker.js'
  * queue's bounded concurrency, retries, and per-attempt timeout / abort.
  *
  * @remarks
- * The pool's `max` defaults to `concurrency`, so resources match the jobs in flight and
- * are reused across jobs. A handler that throws still releases its resource (the
+ * Default for the pool's `max`: the `concurrency` value, so resources match the jobs in flight.
+ * Resources are reused across jobs. A handler that throws still releases its resource (the
  * acquire/release pair brackets the call in a `finally`), so a later job reuses it. The
  * lifecycle (`start` / `stop` / `pause` / `resume` / `abort` / `clear` / `destroy`)
  * delegates to the queue; `destroy` also tears the pool down. Observable (§13): a typed
@@ -18,8 +18,8 @@ import { Worker } from './Worker.js'
  * @typeParam TInput - The work input each job carries
  * @typeParam TResource - The pooled resource each job runs against
  * @typeParam TResult - The value the handler resolves for a job
- * @param options - The `handler` and `pool` plus optional `concurrency` (default `1`),
- *   `retries` (default `0`), and a default per-attempt `timeout` in milliseconds
+ * @param options - The `handler` and `pool` plus the optional `concurrency`, `retries`,
+ *   `timeout`, `store`, `on`, and `error` keys (see {@link WorkerOptions})
  * @returns A working {@link WorkerInterface}
  *
  * @example

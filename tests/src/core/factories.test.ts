@@ -3,8 +3,9 @@ import { createWorker } from '@src/core'
 import { createRecorder } from '@orkestrel/test'
 
 // src/core/factories.ts — createWorker wires up a working, typed interface end to end
-// (AGENTS §16). createQueue / createPool / createDatabaseQueueStore / createMemoryQueueStore
-// are @orkestrel/queue and @orkestrel/pool factories, covered by their own packages' tests.
+// with real implementations. createQueue / createPool / createDatabaseQueueStore /
+// createMemoryQueueStore are @orkestrel/queue and @orkestrel/pool factories, covered by
+// their own packages' tests.
 
 describe('createWorker', () => {
 	it('returns a working worker that runs the handler with a pooled resource', async () => {

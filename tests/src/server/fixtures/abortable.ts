@@ -1,5 +1,5 @@
 // A real worker-thread script. Cooperative: it awaits its abort signal and resolves the
-// sentinel `-1` once it fires, so a manually-driven test can observe the handler react.
+// sentinel `-1` after it fires, so a manually-driven test can observe the handler react.
 import { serveWorker } from '../../../../src/server/handlers.ts'
 
 serveWorker({

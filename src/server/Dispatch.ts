@@ -1,4 +1,4 @@
-import type { QueueExecution } from '@orkestrel/queue'
+import type { QueueContext } from '@orkestrel/queue'
 import type { Guard } from '@orkestrel/contract'
 import type { NodeThread } from './types.js'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
@@ -7,19 +7,55 @@ import { isReply } from './helpers.js'
 import { Thread } from './Thread.js'
 
 /**
- * Represents the internal lifecycle entity for one dispatched worker-thread job.
+ * Represents one dispatched worker-thread job — the lifecycle entity behind a job posted to a
+ * leased {@link NodeThread}, whose {@link promise} settles with the narrowed reply.
  *
  * @remarks
- * Owns stable `message` / `messageerror` / death listener identities, settlement, result-guard
- * containment, and abort eviction for one dispatch. Deserialization failure, a matching-id
- * malformed reply, and abort each evict and terminate the thread before rejecting, with
- * termination failure preserved. Non-record, id-less, hostile-id, and foreign-id chatter is ignored.
+ * Mints a fresh per-dispatch correlation `id`, posts it with `job: context.id`, and settles
+ * when the thread replies for that correlation id. The stable Queue job id reaches the worker
+ * handler for idempotency across retries and restore; it is not caller identity or
+ * authentication / authorization evidence. Per-job consumer context is explicit,
+ * structured-cloneable `input`; ambient context is not worker-thread transport. A success
+ * `value` is narrowed through `result` (a value that fails the guard rejects — the zero-`as`
+ * type bridge); a failure rejects with the thread's error string. A thread that ALREADY died
+ * rejects synchronously at construction from the latched {@link NodeThread.death} — its death
+ * events fired before this dispatch existed and will never fire again, so waiting on the
+ * listeners would dangle forever; the latch makes death total across every event ordering. If
+ * the thread `error`s / `exit`s mid-flight the job rejects. On a `context.signal` abort it
+ * contains the cooperative `abort` post, evicts the thread, and observes `terminate()`
+ * settlement because CPU-bound work cannot honour the signal.
+ *
+ * It owns stable `message` / `messageerror` / death listener identities, settlement,
+ * result-guard containment, and abort eviction for one dispatch. Deserialization failure, a
+ * matching-id malformed reply, and abort each evict and terminate the thread before rejecting,
+ * with termination failure preserved. Non-record, id-less, hostile-id, and foreign-id chatter
+ * is ignored. Every per-job listener (`message` / `messageerror` / `error` / `exit` / `abort`)
+ * is removed on settle.
+ *
+ * Eviction reaches `alive` for a {@link NodeThread} this package produced. Against a
+ * consumer-supplied `NodeThread` an abort or a `messageerror` still terminates the supplied
+ * `worker` and rejects the job, and the implementer owns flipping its own `alive`.
+ *
+ * @typeParam TResult - The reply type the `result` guard narrows to
+ *
+ * @example
+ * ```ts
+ * import { createThread, Dispatch } from '@orkestrel/worker/server'
+ *
+ * const isNumber = (value: unknown): value is number => typeof value === 'number'
+ *
+ * const thread = await createThread(new URL('./double.js', import.meta.url))
+ * const controller = new AbortController()
+ * const job = new Dispatch(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
+ * console.log(await job.promise) // 42
+ * await thread.worker.terminate()
+ * ```
  */
 export class Dispatch<TResult> {
 	readonly #thread: NodeThread
 	readonly #worker: ThreadWorker
 	readonly #input: unknown
-	readonly #execution: QueueExecution
+	readonly #context: QueueContext
 	readonly #result: Guard<TResult>
 	readonly #id = crypto.randomUUID()
 	readonly #promise: Promise<TResult>
@@ -32,16 +68,11 @@ export class Dispatch<TResult> {
 	readonly #abortHandler: () => void
 	#settled = false
 
-	constructor(
-		thread: NodeThread,
-		input: unknown,
-		execution: QueueExecution,
-		result: Guard<TResult>,
-	) {
+	constructor(thread: NodeThread, input: unknown, context: QueueContext, result: Guard<TResult>) {
 		this.#thread = thread
 		this.#worker = thread.worker
 		this.#input = input
-		this.#execution = execution
+		this.#context = context
 		this.#result = result
 		const settlement = Promise.withResolvers<TResult>()
 		this.#promise = settlement.promise
@@ -68,15 +99,15 @@ export class Dispatch<TResult> {
 		this.#worker.on('messageerror', this.#messageErrorHandler)
 		this.#worker.on('error', this.#errorHandler)
 		this.#worker.on('exit', this.#exitHandler)
-		if (this.#execution.signal.aborted) {
+		if (this.#context.signal.aborted) {
 			this.#abort()
 			return
 		}
-		this.#execution.signal.addEventListener('abort', this.#abortHandler, { once: true })
+		this.#context.signal.addEventListener('abort', this.#abortHandler, { once: true })
 		try {
 			this.#worker.postMessage({
 				id: this.#id,
-				job: this.#execution.id,
+				job: this.#context.id,
 				command: 'run',
 				input: this.#input,
 			})
@@ -125,7 +156,7 @@ export class Dispatch<TResult> {
 		} catch (cause: unknown) {
 			notification.push(cause)
 		}
-		this.#terminate(this.#execution.signal.reason, notification)
+		this.#terminate(this.#context.signal.reason, notification)
 	}
 
 	#terminate(error: unknown, notification: readonly unknown[] = []): void {
@@ -175,6 +206,6 @@ export class Dispatch<TResult> {
 		this.#worker.off('messageerror', this.#messageErrorHandler)
 		this.#worker.off('error', this.#errorHandler)
 		this.#worker.off('exit', this.#exitHandler)
-		this.#execution.signal.removeEventListener('abort', this.#abortHandler)
+		this.#context.signal.removeEventListener('abort', this.#abortHandler)
 	}
 }

@@ -1,9 +1,9 @@
 import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '@orkestrel/emitter'
 import type { PoolOptions } from '@orkestrel/pool'
-import type { QueueEntryOptions, QueueExecution, QueueStoreInterface } from '@orkestrel/queue'
+import type { QueueContext, QueueEntryOptions, QueueStoreInterface } from '@orkestrel/queue'
 
 /**
- * Represents the push observation surface of a {@link WorkerInterface} (AGENTS §13) — the job
+ * Represents the push observation surface of a {@link WorkerInterface} — the job
  * lifecycle a fire-and-forget observer subscribes to, surfacing the underlying queue's
  * moments so a Worker consumer never reaches through to the internal `Queue`.
  *
@@ -15,7 +15,7 @@ import type { QueueEntryOptions, QueueExecution, QueueStoreInterface } from '@or
  * map RE-EXPOSES the queue lifecycle the worker surfaces (`enqueue` / `start` / `retry` /
  * `success` / `failure` / `abort` / `drain`) as the worker's OWN events — wired from the
  * underlying queue's emitter at construction, so a buggy observer is isolated exactly as
- * on the queue (a throw routes to the worker emitter's `error` handler, AGENTS §13). The
+ * on the queue (a throw routes to the worker emitter's `error` handler). The
  * pool's create / acquire / release events stay the pool's internal concern (a Worker
  * manages its own resources); a consumer who wants them observes a `Pool` directly.
  * Declared as a `type` alias (§4.5).
@@ -41,7 +41,7 @@ export type WorkerEventMap<TResult> = {
 export type WorkerHandler<TInput, TResource, TResult> = (
 	input: TInput,
 	resource: TResource,
-	execution: QueueExecution,
+	context: QueueContext,
 ) => Promise<TResult> | TResult
 
 /**
@@ -50,12 +50,13 @@ export type WorkerHandler<TInput, TResource, TResult> = (
  * @remarks
  * - `handler` — runs each job against an acquired pool resource; rejecting triggers a
  *   retry while attempts remain (delegated to the underlying queue).
- * - `pool` — the {@link PoolOptions} for the resource the handler runs against; its
- *   `max` defaults to `concurrency` so resources match the jobs in flight.
- * - `concurrency` — the maximum jobs in flight at once; defaults to `1` and must be a
- *   positive safe integer, as validated by the underlying queue.
- * - `retries` — the default extra attempts per job on failure; defaults to `0`.
- * - `timeout` — the default per-attempt deadline in milliseconds; defaults to none.
+ * - `pool` — the {@link PoolOptions} for the resource the handler runs against, sized so
+ *   resources match the jobs in flight. Default for its `max`: the `concurrency` value.
+ * - `concurrency` — the maximum jobs in flight at once; it must be a positive safe
+ *   integer, as validated by the underlying queue. Default: 1.
+ * - `retries` — the default extra attempts per job on failure. Default: 0.
+ * - `timeout` — the default per-attempt deadline in milliseconds. Default: no per-attempt
+ *   deadline.
  * - `store` — durable backing; outstanding entries survive a restart; call
  *   `restore()` to re-run them.
  * - `on` — the reserved {@link EmitterHooks} key (§8): initial listeners for the worker's
@@ -64,7 +65,7 @@ export type WorkerHandler<TInput, TResource, TResult> = (
  */
 export interface WorkerOptions<TInput, TResource, TResult> {
 	readonly on?: EmitterHooks<WorkerEventMap<TResult>>
-	/** Holds the emitter's listener-error handler (AGENTS §13) — a listener throw routes here, not to a domain event. */
+	/** Holds the emitter's listener-error handler; a listener throw routes here, not to a domain event. */
 	readonly error?: EmitterErrorHandler
 	readonly handler: WorkerHandler<TInput, TResource, TResult>
 	readonly pool: PoolOptions<TResource>
@@ -79,7 +80,7 @@ export interface WorkerOptions<TInput, TResource, TResult> {
  * Represents a resource-backed job worker — a Queue whose handler runs against a pooled resource.
  *
  * @remarks
- * Exposes a typed {@link emitter} (AGENTS §13) carrying the job lifecycle
+ * Exposes a typed {@link emitter} carrying the job lifecycle
  * ({@link WorkerEventMap}) — the underlying queue's moments re-exposed as the worker's own,
  * so a consumer never reaches through to internals. Emitting is observation-only: a buggy
  * observer is isolated exactly as on the queue (a throw routes to the emitter's `error`

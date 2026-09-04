@@ -2,15 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Worker as ThreadWorker } from 'node:worker_threads'
 import { serveWorker } from '@src/server'
 import { createRecorder, createTeardown, waitForDelay } from '@orkestrel/test'
-import { postRun, ThreadReply } from '../../setupServer.js'
+import { buildFixtureURL, postRun, ThreadReply } from '../../setupServer.js'
 
 // src/server/handlers.ts — the worker-side `serveWorker` entry, driven MANUALLY
 // (no createNodeWorker): a raw `node:worker_threads` thread over a serve fixture, posting
 // run/abort envelopes and awaiting the reply. Proves the protocol contract directly — a
 // success envelope, an input-guard rejection envelope, and a cooperative abort firing the
 // handler's signal. Every thread is terminated in `afterEach` so none leaks.
-
-const fixture = (name: string): URL => new URL(`./fixtures/${name}`, import.meta.url)
 
 // Track every spawned thread so it is terminated in afterEach even when an assertion throws — the
 // shared §16.1 teardown registrar (the disposer terminates a raw worker thread; its
@@ -26,7 +24,7 @@ function track(thread: ThreadWorker): ThreadWorker {
 }
 
 function spawn(name: string): ThreadWorker {
-	return track(new ThreadWorker(fixture(name)))
+	return track(new ThreadWorker(buildFixtureURL(name)))
 }
 
 describe('serveWorker — success reply envelope', () => {
@@ -38,7 +36,7 @@ describe('serveWorker — success reply envelope', () => {
 	})
 })
 
-describe('serveWorker — execution identity', () => {
+describe('serveWorker — stable job identity', () => {
 	it('replies by correlation id while exposing the stable Queue id to the handler', async () => {
 		const thread = spawn('execution.ts')
 		const pending = new ThreadReply(thread, 'dispatch-1').promise
@@ -50,7 +48,7 @@ describe('serveWorker — execution identity', () => {
 		const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)
 		const handled = new Int32Array(shared)
 		const replies = createRecorder<[unknown]>()
-		const thread = track(new ThreadWorker(fixture('execution.ts'), { workerData: shared }))
+		const thread = track(new ThreadWorker(buildFixtureURL('execution.ts'), { workerData: shared }))
 		thread.on('message', replies.handler)
 		const pending = new ThreadReply(thread, 'dispatch-valid').promise
 		thread.postMessage({ id: 'dispatch-missing', command: 'run', input: 1 })
@@ -129,7 +127,7 @@ describe('serveWorker — abort fires the handler signal', () => {
 		// Start a job that parks on its abort signal, then abort only by correlation id.
 		postRun(thread, 'dispatch-4', 'stable-4', 100)
 		thread.postMessage({ id: 'dispatch-4', command: 'abort' })
-		// The cooperative handler resolves the sentinel -1 once its signal fires.
+		// The cooperative handler resolves the sentinel -1 after its signal fires.
 		expect(await pending).toEqual({ id: 'dispatch-4', ok: true, value: -1 })
 	})
 
@@ -183,8 +181,8 @@ describe('serveWorker — unknown message command', () => {
 describe('serveWorker — result shapes round-trip', () => {
 	it('replies an object / array / null / boolean value unchanged', async () => {
 		// `echo.ts` returns its input verbatim, so the reply `value` carries whatever shape was
-		// posted — proving the `{ ok: true, value }` envelope round-trips structured shapes (not
-		// just scalars) through the worker side.
+		// posted — proving the `{ ok: true, value }` envelope round-trips structured shapes as
+		// well as scalars through the worker side.
 		const thread = spawn('echo.ts')
 		const shapes: readonly unknown[] = [
 			{ nested: { count: 2 }, items: [1, 2, 3] },
@@ -205,7 +203,9 @@ describe('serveWorker — option capture', () => {
 	it('reads input then handler once and retains both identities across jobs', async () => {
 		const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 3)
 		const counters = new Int32Array(shared)
-		const thread = track(new ThreadWorker(fixture('serve-options.ts'), { workerData: shared }))
+		const thread = track(
+			new ThreadWorker(buildFixtureURL('serve-options.ts'), { workerData: shared }),
+		)
 		const first = new ThreadReply(thread, 'job-o1').promise
 		postRun(thread, 'job-o1', 'job-o1', 21)
 		expect(await first).toEqual({ id: 'job-o1', ok: true, value: 42 })
@@ -220,7 +220,9 @@ describe('serveWorker — option capture', () => {
 		const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 3)
 		const counters = new Int32Array(shared)
 		Atomics.store(counters, 2, 1)
-		const thread = track(new ThreadWorker(fixture('serve-options.ts'), { workerData: shared }))
+		const thread = track(
+			new ThreadWorker(buildFixtureURL('serve-options.ts'), { workerData: shared }),
+		)
 		const failure = Promise.withResolvers<Error>()
 		thread.once('error', failure.resolve)
 		const error = await failure.promise
@@ -234,7 +236,7 @@ describe('serveWorker — main-thread no-op', () => {
 	it('reads neither option and never runs the handler when called off a worker thread', async () => {
 		// THIS test runs on the main thread, where `parentPort === null`, so `serveWorker`
 		// must return immediately — registering no listeners and never invoking the handler.
-		// A recorder stands in for the handler; it is a real callback (AGENTS §16.1), so a
+		// A recorder stands in for the handler; it is a real callback, so a
 		// single recorded call would prove the no-op guard failed.
 		const reads = createRecorder<[string]>()
 		const handled = createRecorder<[number]>()

@@ -3,7 +3,7 @@ import { serveWorker } from '../../../../src/server/handlers.ts'
 
 // CRASHES the thread mid-flight (not a handler throw): a NEGATIVE input calls
 // `process.exit(1)`, killing the thread WITHOUT a reply — so the parent's `ThreadWorker`
-// emits `'exit'` while the job is in flight and hits `dispatch`'s `onExit` (the thread is
+// emits `'exit'` while the job is in flight and hits the `Dispatch`'s `onExit` (the thread is
 // marked dead + evicted), distinct from `fail.ts`'s normal `{ ok: false }` error reply. A
 // non-negative input doubles as usual, so a SUBSEQUENT job proves the pool spun up a fresh
 // thread after the crashed one was evicted.

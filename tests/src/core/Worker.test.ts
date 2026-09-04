@@ -27,10 +27,10 @@ function track<T extends DestroyableWorker>(worker: T): T {
 	return worker
 }
 
-// src/core/workers/Worker.ts — the Queue⨉Pool facade. Real behaviour, no mocks: a
+// src/core/Worker.ts — the Queue⨉Pool facade. Real behaviour, no mocks: a
 // counting `create` hook proves resources are reused and never exceed the pool max,
 // gates pin jobs in flight so the cap is observable, and a throwing handler proves the
-// acquired resource is released in the `finally` and reused by a later job (AGENTS §16).
+// acquired resource is released in the `finally` and reused by a later job.
 // Beyond the per-feature cases, production-grade sections cover: the resource bound
 // under saturation (40 jobs through 3 slots — at most 3 resources), a burst of failing
 // handlers never starving the pool, the pool-max-vs-queue-concurrency mismatch (real
@@ -617,7 +617,7 @@ describe('Worker — lifecycle delegation', () => {
 })
 
 describe('Worker — a signal-ignoring handler keeps its resource leased', () => {
-	it('frees the queue slot on timeout while the resource stays held, then reuses it once the handler settles', async () => {
+	it('frees the queue slot on timeout while the resource stays held, then reuses it after the handler settles', async () => {
 		const { create, created } = createResourceFactory()
 		const gate = Promise.withResolvers<void>()
 		const started = createRecorder<[number]>()
@@ -848,7 +848,7 @@ describe('Worker — destroy tears down the pool', () => {
 			concurrency: 1,
 			pool: { create, destroy },
 			// A cooperative handler that unwinds on its signal, so the `finally` releases
-			// the resource into the (now-destroyed) pool, which destroys it.
+			// the resource into the already-destroyed pool, which destroys it.
 			handler: (_input, _resource, execution) =>
 				new Promise<void>((_resolve, reject) => {
 					execution.signal.addEventListener('abort', () => reject(execution.signal.reason), {
@@ -929,7 +929,7 @@ describe('Worker — destroy tears down the pool', () => {
 })
 
 describe('Worker — durability passthrough + restore', () => {
-	it('persists a job through its store and re-runs it via restore (delegated to the queue)', async () => {
+	it('persists a job through its store and re-runs it on restore (delegated to the queue)', async () => {
 		const store = createMemoryQueueStore(stringShape())
 
 		// Worker A: persist a job but never run it — paused, so its parked workers leave the
@@ -1071,7 +1071,7 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 		let liveHandlers = 0
 		let peakHandlers = 0
 		// concurrency 4 but only 2 resources — at most 2 handlers can truly run at once
-		// because a handler only proceeds once it has ACQUIRED a resource.
+		// because a handler only proceeds after it has ACQUIRED a resource.
 		const worker = new Worker<number, number, void>({
 			concurrency: 4,
 			pool: { create, max: 2 },
@@ -1195,7 +1195,7 @@ describe('Worker — destroy mid-flight tears down queue and pool together', () 
 	})
 })
 
-// ── Emitter — the PUSH observation surface (AGENTS §13) ──────────────────────
+// ── Emitter — the PUSH observation surface ───────────────────────────────────
 //
 // The Worker exposes a typed `emitter` (`WorkerEventMap<TResult>`) RE-EXPOSING the
 // underlying queue's job lifecycle — `enqueue` / `start` / `retry` / `success` / `failure` /
@@ -1204,13 +1204,13 @@ describe('Worker — destroy mid-flight tears down queue and pool together', () 
 // worker's own emitter, which isolates a buggy worker observer (routing its throw to the
 // worker emitter's `error` handler — the `error` option) so it can NEVER corrupt the inner
 // queue or pool. These pin: the facade events fire at the right moments with the right
-// payloads; `on?` wires initial listeners; and the emit-safety guarantee — a throwing observer
-// leaves the worker fully functional (jobs still run against pooled resources, counts
-// balanced), yet the `error` handler fires.
+// payloads; `on?` wires initial listeners; and the emitter's listener isolation — one listener's
+// throw never prevents a sibling listener and reaches the emitter's `error` handler, while the
+// worker stays fully functional (jobs still run against pooled resources, counts balanced).
 
 // The WorkerEventMap event names recorded across the emitter tests — fed to the shared
-// `createRecorders` (AGENTS §16.1: the per-event wiring is centralized; this file
-// keeps only the names its scenarios observe).
+// `createRecorders`; the per-event wiring is centralized, and this file keeps only the
+// names its scenarios observe.
 const WORKER_EVENTS: readonly [
 	'enqueue',
 	'start',

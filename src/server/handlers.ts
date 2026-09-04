@@ -22,7 +22,7 @@ import { parentPort } from 'node:worker_threads'
  * success value cannot be cloned, the post is retried as a clone-safe failure; if that post also
  * fails, the parent port closes so the main side observes thread exit instead of waiting forever.
  * The run envelope's `id` is fresh per dispatch and keys controllers, aborts, and replies;
- * its `job` is the stable Queue idempotency key exposed as `execution.id` across retries
+ * its `job` is the stable Queue idempotency key exposed as `context.id` across retries
  * and restore. That job id identifies work, not a caller, and is not authentication or
  * authorization evidence. Each attempt has its own `AbortController`, so an `abort`
  * message for the correlation id fires the handler's `signal` (cooperative — the main
@@ -52,7 +52,8 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 	const handler = options.handler
 	const controllers = new Map<string, AbortController>()
 	port.on('message', (raw: unknown) => {
-		// Read the envelope's four fields once, defensively. A hostile message can be a revoked
+		// Read the envelope's `command`, `id`, `job`, and `input` fields once, defensively. A
+		// hostile message can be a revoked
 		// proxy or carry a throwing getter, so every property access sits inside this one guard:
 		// a read that throws leaves the envelope unrecognised and the message is dropped without
 		// a reply, exactly as a malformed envelope is.
@@ -81,10 +82,10 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 			return
 		}
 		// A `run` envelope carries BOTH ids: `id` is the per-dispatch correlation, `job` the
-		// stable Queue execution id handed to the handler. A legacy or malformed envelope
+		// stable Queue entry id handed to the handler. A malformed envelope
 		// without a string `job`, or without an `input` at all, fails closed with no reply.
 		if (command !== 'run' || typeof job !== 'string' || !carried) return
-		const execution = job
+		const entry = job
 		const value = payload
 		const controller = new AbortController()
 		controllers.set(id, controller)
@@ -93,7 +94,7 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 				if (!input(value)) {
 					throw new Error('input did not satisfy input guard')
 				}
-				return handler(value, { id: execution, signal: controller.signal })
+				return handler(value, { id: entry, signal: controller.signal })
 			})
 			.then((result) => {
 				controllers.delete(id)

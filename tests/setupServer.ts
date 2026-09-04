@@ -1,12 +1,14 @@
 // Server-test setup — node-only helpers, loaded after `setup.ts` for the node
 // `src:server` project. `node:fs` / `node:os` / `node:path` imports belong here,
-// never in `setup.ts` (AGENTS §16.1).
+// never in `setup.ts`.
 
 import type { NodeWorkerOptions } from '@src/server'
 import type { RecorderInterface } from '@orkestrel/test'
+import type { ScratchInterface } from '@orkestrel/test/server'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
 import { join } from 'node:path'
 import { isRecord } from '@orkestrel/contract'
+import { resolveRoot } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 
 /** Post one valid raw run envelope to a real worker thread. */
@@ -14,16 +16,30 @@ export function postRun(thread: ThreadWorker, id: string, job: string, input: un
 	thread.postMessage({ id, job, command: 'run', input })
 }
 
-// A fresh on-disk JSON-store path under an owned scratch directory, with a `cleanup`
-// thunk that removes it. Used by the `createJSONQueueStore` tests, which need real
-// file persistence across a store reopen. Call `cleanup` in `afterEach` so no temp
-// file leaks (AGENTS §16.1).
-export function tempDatabasePath(): { readonly path: string; readonly cleanup: () => void } {
-	const scratch = createScratch({ prefix: 'worker-store-' })
-	return {
-		path: join(scratch.path, 'store.json'),
-		cleanup: () => scratch.destroy(),
+// The one worker-fixture URL builder for the whole suite, anchored to the workspace root
+// rather than to a caller's module URL, so every test file resolves the same directory
+// without redeclaring a local factory.
+export function buildFixtureURL(name: string): URL {
+	return new URL(`tests/src/server/fixtures/${name}`, resolveRoot(import.meta))
+}
+
+/** Creates a success listener that resolves its result and then throws. */
+export function createThrowingSuccess(
+	resolve: (value: readonly [id: string, result: number]) => void,
+): (id: string, result: number) => void {
+	return (id, result) => {
+		resolve([id, result])
+		throw new Error('listener-boom')
 	}
+}
+
+// A fresh on-disk JSON-store path under an owned scratch directory, returned with the
+// scratch that owns it. Used by the `createJSONQueueStore` tests, which need real file
+// persistence across a store reopen. Register `scratch.destroy` as a disposer so no temp
+// file leaks.
+export function tempDatabasePath(): { readonly path: string; readonly scratch: ScratchInterface } {
+	const scratch = createScratch({ prefix: 'worker-store-' })
+	return { path: join(scratch.path, 'store.json'), scratch }
 }
 
 /** Getter-backed Node worker options whose property reads are recorded. */
@@ -37,6 +53,16 @@ export class NodeWorkerOptionsProbe<TInput, TResult> implements NodeWorkerOption
 	) {
 		this.#values = values
 		this.#reads = reads
+	}
+
+	get on(): Required<NodeWorkerOptions<TInput, TResult>>['on'] {
+		this.#reads.handler('on')
+		return this.#values.on
+	}
+
+	get error(): Required<NodeWorkerOptions<TInput, TResult>>['error'] {
+		this.#reads.handler('error')
+		return this.#values.error
 	}
 
 	get script(): string | URL {

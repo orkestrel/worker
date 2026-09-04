@@ -7,9 +7,9 @@ import { serveWorker } from '../../../../src/server/handlers.ts'
 serveWorker({
 	input: (value: unknown): value is number => typeof value === 'number',
 	handler: (value) => {
-		const deadline = Date.now() + value
+		const deadline = performance.now() + value
 		// Intentionally ignores the signal — a tight spin loop.
-		while (Date.now() < deadline) {
+		while (performance.now() < deadline) {
 			// burn CPU
 		}
 		return value

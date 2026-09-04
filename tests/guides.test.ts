@@ -1,7 +1,7 @@
 // The consumer-side guides-parity drop-in: runs `@orkestrel/guide`'s checks against
 // this repo's own `guides/README.md` manifest — one row (Worker) spanning the
-// core/server faces as a multi-dir `GuideModule` (AGENTS §22 — one guide per
-// package). The constants below are this package's own, and are the only part a
+// core/server faces as a multi-dir `GuideModule`. The following constants are this
+// package's own, and are the only part a
 // sibling package changes.
 
 import { describe, expect, it } from 'vitest'
@@ -20,8 +20,17 @@ import {
 	resolveLink,
 } from '@orkestrel/guide'
 import { readFileSync } from 'node:fs'
+import { isNumber, stringShape } from '@orkestrel/contract'
 import { requireValue } from '@orkestrel/test'
 import { readInventory } from '@orkestrel/test/server'
+import {
+	createJSONQueueStore,
+	createNodeWorker,
+	createThread,
+	Dispatch,
+	isReply,
+} from '@src/server'
+import { buildFixtureURL, tempDatabasePath } from './setupServer.js'
 
 /** Every fence language this package's guides are allowed to use. */
 const FENCE_LANGUAGES = Object.freeze(['ts'])
@@ -37,18 +46,13 @@ const MODULES = Object.freeze({
  * Declarations deliberately kept out of the barrel, as `computeSymbolKey` strings.
  *
  * The coding-law gate requires every matching implementation class declaration to
- * carry `export`, while `Dispatch`, `NodeWorker`, and `Thread` are intentionally
- * absent from `src/server/index.ts` — internal orchestration classes behind the
- * documented `createNodeWorker` / `spawnThread` / `dispatch` surface, not package
- * exports. Naming them here is what makes that intentional rather than forgotten —
- * and the second assertion below fails when a name here stops being stranded, so
- * the list cannot rot.
+ * carry `export`, while `NodeWorker` and `Thread` are intentionally absent from
+ * `src/server/index.ts` — internal orchestration classes behind the documented
+ * `createNodeWorker` / `createThread` surface, not package exports. Naming them here
+ * is what makes that intentional rather than forgotten — and the paired assertion
+ * fails when a name here stops being stranded, so the list cannot rot.
  */
-const INTERNAL: readonly string[] = Object.freeze([
-	'class Dispatch',
-	'class NodeWorker',
-	'class Thread',
-])
+const INTERNAL: readonly string[] = Object.freeze(['class NodeWorker', 'class Thread'])
 
 /** Root-level files this package's guides link to. `readInventory` walks directories only. */
 const ROOT_FILES = Object.freeze(['AGENTS.md'])
@@ -70,7 +74,7 @@ it('manifest lists at least one guide', () => {
 
 it('keeps internal orchestration classes out of the public server barrel', () => {
 	const barrel = requireValue(files['src/server/index.ts'], 'Missing file: src/server/index.ts')
-	const names = ['Dispatch', 'NodeWorker', 'Thread']
+	const names = ['NodeWorker', 'Thread']
 	expect(names.every((name) => !barrel.includes(`./${name}.js`))).toBe(true)
 })
 
@@ -136,7 +140,7 @@ for (const entry of manifest) {
 				.map((fence) => fence.code)
 			const names = guide
 				.surface()
-				.filter((symbol) => symbol.kind === 'function')
+				.filter((symbol) => symbol.keyword === 'function')
 				.map((symbol) => symbol.name)
 			expect(findUnexampled(names, fences, source.examples())).toEqual([])
 		})
@@ -187,3 +191,65 @@ for (const entry of manifest) {
 		})
 	})
 }
+
+// Every preceding assertion proves a name resolves; none proves a value. The flagship fences in
+// `guides/worker.md` each state a value in a trailing comment, so they are transcribed here
+// and run against the real exports — a fence whose comment stops matching what the code
+// returns reddens one of these. Change a fence, change its transcription.
+describe('worker.md fences return the values they claim', () => {
+	it('the Threads fence drives one thread by hand and filters its replies', async () => {
+		const thread = await createThread(buildFixtureURL('double.ts'))
+		const controller = new AbortController()
+		try {
+			const job = new Dispatch(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
+			expect(await job.promise).toBe(42)
+			expect(isReply({ id: 'reply-1', ok: true, value: 42 }, 'reply-1')).toBe(true)
+			expect(isReply({ id: 'reply-1', ok: true, value: 42 }, 'other')).toBe(false)
+		} finally {
+			await thread.worker.terminate()
+		}
+	})
+
+	it('the NodeWorker fence doubles 21 on a worker thread', async () => {
+		const worker = createNodeWorker({
+			script: buildFixtureURL('double.ts'),
+			input: isNumber,
+			result: isNumber,
+			concurrency: 4,
+			retries: 1,
+		})
+		try {
+			await expect(worker.enqueue(21)).resolves.toBe(42)
+		} finally {
+			await worker.destroy()
+		}
+	})
+
+	it('the Persistence fence resumes the prior process outstanding entry', async () => {
+		const { path, scratch } = tempDatabasePath()
+		try {
+			const store = createJSONQueueStore(path, stringShape())
+			await store.save({ id: 'job-1', input: 'https://example.com', attempts: 0 })
+
+			const resumed = createJSONQueueStore(path, stringShape())
+			const work = await resumed.load()
+			expect(work).toEqual([{ id: 'job-1', input: 'https://example.com', attempts: 0 }])
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it('the CPU-parallel patterns fence doubles 21 over a thread pool', async () => {
+		const worker = createNodeWorker({
+			script: buildFixtureURL('double.ts'),
+			input: isNumber,
+			result: isNumber,
+			concurrency: 4,
+		})
+		try {
+			await expect(worker.enqueue(21)).resolves.toBe(42)
+		} finally {
+			await worker.destroy()
+		}
+	})
+})

@@ -10,13 +10,13 @@ observable (a typed `emitter` re-exposes the underlying queue's job lifecycle
 — `enqueue` / `start` / `retry` / `success` / `failure` / `abort` / `drain`).
 For CPU-parallel work, the server surface's `createNodeWorker` specializes the
 core `createWorker` over a pool of `node:worker_threads`, crossing the
-structured-clone boundary with zero `as` via `input` / `result` guards. Each
+structured-clone boundary with zero `as` through `input` / `result` guards. Each
 thread handler receives `{ id, signal }`: `id` is the Queue's stable idempotency
 key across retries and crash restore, while `signal` is per attempt. The wire
 protocol separately mints a fresh correlation id for each dispatch so a stale
 reply cannot settle a later retry. The stable id identifies work, not a caller,
 and is not authentication or authorization evidence; per-job consumer context
-remains explicit structured-cloneable input rather than ambient thread state.
+is explicit, structured-cloneable input rather than ambient thread state.
 Part of the `@orkestrel` line.
 
 ## Install
@@ -26,6 +26,8 @@ npm install @orkestrel/worker
 ```
 
 ## Requirements
+
+The package runs under these conditions:
 
 - Node.js >= 22.12.0
 - ESM and CommonJS builds ship for both the core and server entry points
@@ -72,7 +74,7 @@ patterns — see [`guides/worker.md`](guides/worker.md).
 
 ## Package
 
-Published with two entry points per the `exports` field in `package.json`:
+Published with the entry points the `exports` field in `package.json` names:
 the environment-agnostic core (`.`) and the Node-only server surface
 (`./server`).
 

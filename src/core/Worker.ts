@@ -1,5 +1,5 @@
 import type { EmitterInterface } from '@orkestrel/emitter'
-import type { QueueEntryOptions, QueueExecution } from '@orkestrel/queue'
+import type { QueueContext, QueueEntryOptions } from '@orkestrel/queue'
 import type { WorkerEventMap, WorkerHandler, WorkerInterface, WorkerOptions } from './types.js'
 import { Emitter } from '@orkestrel/emitter'
 import { Pool } from '@orkestrel/pool'
@@ -22,7 +22,7 @@ import { Queue } from '@orkestrel/queue'
  *   options. At most one resource exists per in-flight job by default, and idle resources are
  *   reused across jobs.
  * - **Acquire over the attempt signal.** Each job acquires using the attempt's
- *   `execution.signal`, so an `abort` / `timeout` while waiting for a resource rejects
+ *   `context.signal`, so an `abort` / `timeout` while waiting for a resource rejects
  *   the acquire — the Queue then handles retry / rejection, and there is no token to
  *   release (the resource was never leased).
  * - **Lifecycle (§10).** `enqueue` / `restore` / `start` / `stop` / `pause` / `resume` /
@@ -150,10 +150,10 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		return ending.promise
 	}
 
-	async #handle(input: TInput, execution: QueueExecution): Promise<TResult> {
-		const token = await this.#pool.acquire(execution.signal)
+	async #handle(input: TInput, context: QueueContext): Promise<TResult> {
+		const token = await this.#pool.acquire(context.signal)
 		try {
-			return await this.#handler(input, token.value, execution)
+			return await this.#handler(input, token.value, context)
 		} finally {
 			token.release()
 		}
