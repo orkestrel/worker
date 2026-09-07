@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/worker",
-	"version": "0.0.11",
+	"version": "0.0.12",
 	"description": "A typed, resource-backed job worker for the @orkestrel line — a Queue paired with a Pool over an execution seam, plus a node:worker_threads server surface for CPU-parallel jobs. Part of the @orkestrel line.",
 	"keywords": [
 		"async",
@@ -80,7 +80,8 @@
 		"test:distribution": "vitest run --config vite.config.ts --no-cache --reporter=dot --project distribution",
 		"test:probe": "vitest run --config vite.config.ts --no-cache --reporter=verbose --project probe",
 		"test:bench": "vitest bench --config vite.config.ts --no-cache --project probe",
-		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup"
+		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup",
+		"docs": "node --experimental-strip-types scripts/docs.ts"
 	},
 	"dependencies": {
 		"@orkestrel/contract": "^0.0.16",

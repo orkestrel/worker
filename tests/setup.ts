@@ -10,7 +10,7 @@ import type { RecorderInterface } from '@orkestrel/test'
 // The fleet-wide helpers live in `@orkestrel/test`. What remains here is what is
 // specific to this package.
 
-/** Optional protocol hooks for {@link TestQueueStore}. */
+/** Configures optional protocol hooks for {@link TestQueueStore}. */
 export interface TestQueueStoreHooks<TInput> {
 	readonly save?: (entry: StoredEntry<TInput>) => Promise<void> | void
 	readonly remove?: (id: string) => Promise<void> | void
@@ -18,7 +18,7 @@ export interface TestQueueStoreHooks<TInput> {
 }
 
 /**
- * A protocol-faithful in-memory {@link QueueStoreInterface} with optional operation hooks.
+ * Implements a protocol-faithful in-memory {@link QueueStoreInterface} with optional operation hooks.
  *
  * @remarks
  * The hooks expose external store timing and failures without reproducing Queue behavior.
@@ -55,7 +55,7 @@ export class TestQueueStore<TInput> implements QueueStoreInterface<TInput> {
 	}
 }
 
-/** Getter-backed pool options whose prototype property reads are recorded. */
+/** Records each prototype property read against getter-backed pool options. */
 export class PoolOptionsProbe<T> implements PoolOptions<T> {
 	#values: Required<PoolOptions<T>>
 	readonly #reads: RecorderInterface<readonly [property: keyof PoolOptions<T>]>

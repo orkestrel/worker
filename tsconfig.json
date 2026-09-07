@@ -22,7 +22,9 @@
 		"noEmit": true,
 		"paths": {
 			"@src/core": ["./src/core/index.ts"],
-			"@src/server": ["./src/server/index.ts"]
+			"@src/server": ["./src/server/index.ts"],
+			"@orkestrel/worker/server": ["./src/server/index.ts"],
+			"@orkestrel/worker": ["./src/core/index.ts"]
 		}
 	},
 	"exclude": ["node_modules", "dist", "tmp"]

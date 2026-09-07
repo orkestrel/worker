@@ -11,7 +11,7 @@ import { isRecord } from '@orkestrel/contract'
 import { resolveRoot } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 
-/** Post one valid raw run envelope to a real worker thread. */
+/** Posts one valid raw run envelope to a real worker thread. */
 export function postRun(thread: ThreadWorker, id: string, job: string, input: unknown): void {
 	thread.postMessage({ id, job, command: 'run', input })
 }
@@ -42,7 +42,7 @@ export function tempDatabasePath(): { readonly path: string; readonly scratch: S
 	return { path: join(scratch.path, 'store.json'), scratch }
 }
 
-/** Getter-backed Node worker options whose property reads are recorded. */
+/** Records each property read against getter-backed Node worker options. */
 export class NodeWorkerOptionsProbe<TInput, TResult> implements NodeWorkerOptions<TInput, TResult> {
 	#values: Required<NodeWorkerOptions<TInput, TResult>>
 	readonly #reads: RecorderInterface<readonly [property: keyof NodeWorkerOptions<TInput, TResult>]>
@@ -110,7 +110,7 @@ export class NodeWorkerOptionsProbe<TInput, TResult> implements NodeWorkerOption
 	}
 }
 
-/** A pending reply from a real worker thread with stable listener identities. */
+/** Represents a pending reply from a real worker thread with stable listener identities. */
 export class ThreadReply {
 	readonly #thread: ThreadWorker
 	readonly #id: string
