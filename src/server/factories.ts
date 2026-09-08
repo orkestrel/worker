@@ -13,13 +13,13 @@ import { Thread } from './Thread.js'
  *
  * @remarks
  * Constructs the thread with the `script` module and the cloned `workerData`, then
- * resolves on the thread's `online` event (rejecting on an early `error` OR an `exit`
+ * resolves on the thread's `online` event (rejecting on an early `error` or on an `exit`
  * that arrives before `online`, so the spawn promise is total — it can never dangle on a
  * thread that died without erroring). The returned entity attaches persistent `error` /
- * `exit` listeners that flip `alive` to `false` AND latch the first terminal event on
+ * `exit` listeners that flip `alive` to `false` and latch the first terminal event on
  * {@link NodeThread.death}: a crash is observable to an in-flight {@link Dispatch} (through
  * its own listeners), to a pool's `validate` (through `alive`), and — crucially — to a
- * dispatch that attaches AFTER the death (through the latch). A `messageerror` is terminal
+ * dispatch that attaches only after the death (through the latch). A `messageerror` is terminal
  * too, so a thread whose inbound payload could not be deserialized is never reused. The latch
  * closes a real race: a thread can become terminal before the readiness promise continuation
  * hands it to a {@link Dispatch}, leaving no future death event for that dispatch to observe.
@@ -52,7 +52,7 @@ export function createThread(script: string | URL, workerData?: unknown): Promis
  * (and reloaded from) the file at `path`, surviving a process restart. There is no new
  * class — the store engine ({@link createDatabaseQueueStore}) is shared, and only the
  * driver changes where the bytes live. The `input` shape must be JSON-serializable
- * (the JSON driver round-trips it as JSON). Build a second store over the SAME `path` to
+ * (the JSON driver round-trips it as JSON). Build a second store over the same `path` to
  * resume the outstanding entries a prior store persisted.
  *
  * @typeParam TInput - The contract shape of each entry's `input` payload

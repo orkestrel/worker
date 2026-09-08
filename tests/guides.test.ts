@@ -20,8 +20,9 @@ import {
 } from '@orkestrel/guide'
 import { readFileSync } from 'node:fs'
 import { isNumber, stringShape } from '@orkestrel/contract'
-import { requireValue } from '@orkestrel/test'
+import { requireValue, waitForCondition } from '@orkestrel/test'
 import { readInventory } from '@orkestrel/test/server'
+import { createWorker } from '@src/core'
 import {
 	createJSONQueueStore,
 	createNodeWorker,
@@ -336,5 +337,79 @@ describe('worker.md fences return the values they claim', () => {
 		} finally {
 			await worker.destroy()
 		}
+	})
+
+	// The lifecycle fence states its claims in comments rather than in returned values, so
+	// each comment is asserted here against a real `createWorker`: the `drain` hook firing
+	// when the queue empties, `pause` suspending dequeuing while in-flight work runs to
+	// completion, `clear` rejecting a pending job, `stop` refusing new work, `start`
+	// restarting the loops, and `abort` leaving the worker terminal.
+	it('the lifecycle fence drains, suspends dequeuing, restarts after stop, and is terminal after abort', async () => {
+		const gate = Promise.withResolvers<void>()
+		const idle = Promise.withResolvers<void>()
+		const started: string[] = []
+		const worker = createWorker<string, { readonly id: number }, string>({
+			pool: { create: () => ({ id: 1 }) },
+			handler: async (input) => {
+				started.push(input)
+				if (input === 'blocking') await gate.promise
+				return input
+			},
+			on: { drain: () => idle.resolve() },
+		})
+
+		await expect(worker.enqueue('first')).resolves.toBe('first')
+		await idle.promise
+		expect(worker.count).toBe(0)
+		expect(worker.active).toBe(0)
+
+		const blocking = worker.enqueue('blocking')
+		await waitForCondition('the blocking job is in flight', () => worker.active === 1, {
+			budget: 1000,
+			interval: 5,
+		})
+		worker.pause()
+		expect(worker.paused).toBe(true)
+		const parked = worker.enqueue('parked')
+		gate.resolve()
+		await expect(blocking).resolves.toBe('blocking')
+		await waitForCondition('the blocking job leaves the queue', () => worker.active === 0, {
+			budget: 1000,
+			interval: 5,
+		})
+		expect(started).toEqual(['first', 'blocking'])
+		expect(worker.count).toBe(1)
+
+		worker.resume()
+		expect(worker.paused).toBe(false)
+		await expect(parked).resolves.toBe('parked')
+
+		worker.pause()
+		const dropped = worker.enqueue('dropped')
+		const droppedOutcome = dropped.then(
+			() => undefined,
+			(error: unknown) => error,
+		)
+		await worker.clear()
+		const droppedError = await droppedOutcome
+		expect(droppedError).toBeInstanceOf(Error)
+		expect(String(droppedError)).toContain('queue is cleared')
+		worker.resume()
+
+		await worker.stop()
+		expect(worker.stopped).toBe(true)
+		await expect(worker.enqueue('while stopped')).rejects.toThrow('queue is stopped')
+
+		worker.start()
+		expect(worker.stopped).toBe(false)
+		await expect(worker.enqueue('restarted')).resolves.toBe('restarted')
+
+		await worker.abort('shutting down')
+		expect(worker.stopped).toBe(true)
+		worker.start()
+		expect(worker.stopped).toBe(true)
+		await expect(worker.enqueue('after abort')).rejects.toThrow('queue is aborted')
+
+		await worker.destroy()
 	})
 })

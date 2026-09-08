@@ -12,8 +12,9 @@ import { Worker } from './Worker.js'
  * Resources are reused across jobs. A handler that throws still releases its resource (the
  * acquire/release pair brackets the call in a `finally`), so a later job reuses it. The
  * lifecycle (`start` / `stop` / `pause` / `resume` / `abort` / `clear` / `destroy`)
- * delegates to the queue; `destroy` also tears the pool down. Observable (§13): a typed
- * `emitter` surfaces the queue lifecycle (`enqueue` / `start` / `success` / `failure` / …).
+ * delegates to the queue; `destroy` also tears the pool down. It is observable (see the
+ * guide's `## Observing` section): a typed `emitter` surfaces the queue lifecycle
+ * (`enqueue` / `start` / `success` / `failure` / …).
  *
  * @typeParam TInput - The work input each job carries
  * @typeParam TResource - The pooled resource each job runs against

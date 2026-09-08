@@ -11,8 +11,8 @@ import { Queue } from '@orkestrel/queue'
  *
  * @remarks
  * - **Composition, not reimplementation.** The Worker owns a `Pool` (built from
- *   `options.pool`) and a `Queue` whose handler ACQUIRES a pooled resource, runs the
- *   user handler against it, and RELEASES it in a `finally`. All concurrency, retries,
+ *   `options.pool`) and a `Queue` whose handler `acquire`s a pooled resource, runs the
+ *   user handler against it, and `release`s it in a `finally`. All concurrency, retries,
  *   timeout, and lifecycle are the Queue's — the Worker adds only the resource pairing.
  * - **Resource ↔ concurrency.** The queue strictly validates `concurrency` as a positive
  *   safe integer after caller options are captured once. Only `undefined` defaults
@@ -25,31 +25,31 @@ import { Queue } from '@orkestrel/queue'
  *   `context.signal`, so an `abort` / `timeout` while waiting for a resource rejects
  *   the acquire — the Queue then handles retry / rejection, and there is no token to
  *   release (the resource was never leased).
- * - **Lifecycle (§10).** `enqueue` / `restore` / `start` / `stop` / `pause` / `resume` /
- *   `abort` / `clear` delegate to the queue; `count` / `active` / `paused` / `stopped`
- *   read it. `stop` / `abort` / `clear` return the queue's own cleanup barriers.
- *   `destroy` returns one stable barrier while it tears down the queue, then the pool,
- *   and destroys the worker emitter last. A sole cleanup failure is preserved by
+ * - **Lifecycle (see the guide's `## Methods` section).** `enqueue` / `restore` / `start` /
+ *   `stop` / `pause` / `resume` / `abort` / `clear` delegate to the queue; `count` / `active` /
+ *   `paused` / `stopped` read it. `stop` / `abort` / `clear` return the queue's own cleanup
+ *   barriers. `destroy` returns one stable barrier while it tears down the queue, then the
+ *   pool, and destroys the worker emitter last. A sole cleanup failure is preserved by
  *   identity; failures from both layers become an ordered `AggregateError`.
  * - **Durability.** An optional `store` is passed straight through to the queue, so the
  *   worker's outstanding jobs persist; `restore` re-runs them (delegated to the queue).
- * - **Observable (§13).** The owned {@link emitter} ({@link WorkerEventMap}) RE-EXPOSES the
- *   underlying queue's job lifecycle (`enqueue` / `start` / `retry` / `success` / `failure` /
- *   `abort` / `drain`) as the worker's OWN events — bridged from the inner queue's emitter at
- *   construction — so a consumer observes the worker without reaching through to internals.
- *   The bridge re-emits directly on the worker's own emitter; the worker emitter isolates a
- *   listener throw and routes it to its `error` handler (the `error` option), so a buggy
- *   worker observer can never corrupt the inner queue or pool — the bridge listener never
- *   throws, so the inner queue's own emit stays balanced. The pool's create / acquire /
- *   release events stay the pool's internal concern (a Worker manages its own resources);
- *   observe a `Pool` directly for those.
+ * - **Observable (see the guide's `## Observing` section).** The owned {@link emitter}
+ *   ({@link WorkerEventMap}) re-exposes the underlying queue's job lifecycle (`enqueue` /
+ *   `start` / `retry` / `success` / `failure` / `abort` / `drain`) as the worker's own events —
+ *   bridged from the inner queue's emitter at construction — so a consumer observes the worker
+ *   without reaching through to internals. The bridge re-emits directly on the worker's own
+ *   emitter; the worker emitter isolates a listener throw and routes it to its `error` handler
+ *   (the `error` option), so a buggy worker observer can never corrupt the inner queue or pool
+ *   — the bridge listener never throws, so the inner queue's own emit stays balanced. The
+ *   pool's create / acquire / release events stay the pool's internal concern (a Worker manages
+ *   its own resources); observe a `Pool` directly for those.
  */
 export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInput, TResult> {
 	readonly #queue: Queue<TInput, TResult>
 	readonly #pool: Pool<TResource>
-	// The PUSH observation surface (§13) — the worker's OWN emitter, fed by the queue→worker
-	// bridge. The emitter isolates a worker observer's throw (routing it to the `error`
-	// handler), so it never escapes into queue or pool.
+	// The push observation surface (see the guide's `## Observing` section) — the worker's own
+	// emitter, fed by the queue→worker bridge. The emitter isolates a worker observer's throw
+	// (routing it to the `error` handler), so it never escapes into queue or pool.
 	readonly #emitter: Emitter<WorkerEventMap<TResult>>
 	readonly #handler: WorkerHandler<TInput, TResource, TResult>
 	#ending: PromiseWithResolvers<void> | undefined
@@ -177,7 +177,7 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		else ending.reject(new AggregateError(failures, 'worker destroy cleanup failed'))
 	}
 
-	// Bridge the inner queue's lifecycle onto the worker's OWN emitter, once at construction.
+	// Bridge the inner queue's lifecycle onto the worker's own emitter, once at construction.
 	// Each listener re-emits the queue event directly on the worker's emitter, which isolates a
 	// worker observer's throw (routing it to the worker's `error` handler). Because the bridge
 	// listener itself never throws, the queue's own `#emitter.emit` — which invoked this

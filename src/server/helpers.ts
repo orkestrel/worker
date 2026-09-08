@@ -11,7 +11,7 @@ import { attempt, isRecord } from '@orkestrel/contract'
 // implementation class, so it stays the bottom of the module's graph.
 
 /**
- * Narrows an inbound `message` to a {@link Reply} for a given job `id` — no assertion.
+ * Narrows an inbound `message` to a {@link Reply} for a given correlation `id` — no assertion.
  *
  * @remarks
  * A total predicate: a record whose `id` matches and whose `ok` discriminant is well-formed.
@@ -20,8 +20,8 @@ import { attempt, isRecord } from '@orkestrel/contract'
  * correlated predicate rather than a `Guard<Reply>` and is not accepted where a `Guard` is.
  *
  * @param value - The inbound message to narrow
- * @param id - The job id a matching reply must carry
- * @returns True if the value is this job's well-formed reply; false otherwise
+ * @param id - The per-dispatch correlation id a matching reply must carry
+ * @returns True if the value is this dispatch's well-formed reply; false otherwise
  */
 export function isReply(value: unknown, id: string): value is Reply {
 	const outcome = attempt(() => {

@@ -29,9 +29,9 @@ export type Reply =
  * `alive` starts `true` and flips to `false` when the thread `error`s, reports a
  * `messageerror`, exits, or is evicted on abort; the pool's `validate` reads
  * `alive && worker.threadId > 0`, so a
- * dead thread is destroyed and replaced rather than reused. `death` LATCHES the first
+ * dead thread is destroyed and replaced rather than reused. `death` latches the first
  * terminal event (`error` / `messageerror`, or a synthesized error on `exit`) — the death-signal
- * record a {@link Dispatch} checks at construction, so a job dispatched AFTER the thread died (its
+ * record a {@link Dispatch} checks at construction, so a job dispatched after the thread died (its
  * death events already fired and will never fire again) rejects immediately instead of
  * awaiting events that already happened. A thread can become terminal before the readiness
  * promise continuation attaches dispatch listeners; the latch is what makes that ordering
@@ -58,7 +58,7 @@ export interface NodeThread {
  *   `serveWorker(...)`. Raw TypeScript is unflagged on Node 22.18+ and Node 23.6+;
  *   Node 22.12–22.17 and Node 23.0–23.5 require `--experimental-strip-types`. A built
  *   `.js` / `.mjs` script is an alternative across supported Node versions.
- * - `input` — narrows the work payload BEFORE it crosses the structured-clone boundary
+ * - `input` — narrows the work payload before it crosses the structured-clone boundary
  *   (fail-fast) and supplies the `TInput` inference, so call sites need no type argument.
  * - `result` — narrows every reply value coming back from a thread; an invalid reply
  *   rejects the job. This is the zero-`as` type bridge — `TResult` is inferred from it.

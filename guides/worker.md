@@ -6,21 +6,15 @@
 
 All concurrency, retries, per-attempt timeout, and lifecycle are the Queue's, and all
 resource lifecycle (idle reuse, `max` backpressure, FIFO waiting) is the Pool's; the facade
-adds only the resource pairing, and it reimplements neither primitive. Construction captures
-every caller-owned top-level option once. Only `undefined` selects the `concurrency` default
-(`1`) or matching pool `max`; runtime `null` is invalid and reaches the owning validator.
-Queue is constructed and validates `concurrency` before the caller's pool option is read;
-then every declared pool option (`max`, `on`, `error`, `create`, `destroy`, `validate`) is
-captured once by direct property access before Pool is constructed, preserving structural
-implementations whose members are inherited or non-enumerable. At most one resource exists
-per in-flight job by default, and idle resources are reused across jobs. Each job acquires
-over the attempt's `context.signal`, so an abort or a timeout while waiting for a resource
-rejects the acquire cleanly (no token to release).
+adds only the resource pairing, and it reimplements neither primitive. At most one resource
+exists per in-flight job by default, and idle resources are reused across jobs. Each job
+acquires over the attempt's `context.signal`, so an abort or a timeout while waiting for a
+resource rejects the acquire cleanly (no token to release). For what construction captures,
+when each value is validated, and which validator a runtime `null` reaches, see
+`## Contract`.
 
-The worker is **observable**: its `emitter` re-exposes the underlying queue's job lifecycle
-(`enqueue` / `start` / `retry` / `success` / `failure` / `abort` / `drain`) as its own
-events, bridged at construction, so a consumer never reaches through to the internal
-`Queue`. For CPU parallelism, `createNodeWorker` (`@orkestrel/worker/server`) specializes
+The worker is observable through its own `emitter` — see [Observing](#observing). For CPU
+parallelism, `createNodeWorker` (`@orkestrel/worker/server`) specializes
 `createWorker` over a pool of `node:worker_threads`, with `serveWorker` as the worker-side
 entry; the structured-clone boundary is narrowed by `input` / `result` guards with no
 `as`. Source: [`src/core`](../src/core) (the `Worker` facade) and [`src/server`](../src/server)
@@ -88,7 +82,7 @@ The thread-level functions behind `createNodeWorker`:
 | API            | Kind     | Summary                                                                                 |
 | -------------- | -------- | --------------------------------------------------------------------------------------- |
 | `createThread` | function | Creates one live worker thread and resolves it as a `NodeThread` after it comes online. |
-| `isReply`      | function | Narrows an inbound `message` to a `Reply` for a given job `id` — no assertion.          |
+| `isReply`      | function | Narrows an inbound `message` to a `Reply` for a given correlation `id` — no assertion.  |
 
 ### Classes
 
@@ -130,17 +124,17 @@ exactly, so this doubles as the class's instance-method surface.
 
 #### `WorkerInterface`
 
-| Method    | Returns            | Summary                                                                                                      |
-| --------- | ------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `enqueue` | `Promise<TResult>` | Submits one job in FIFO order; the handler runs against an acquired resource, released when the job settles. |
-| `restore` | `Promise<void>`    | Re-enqueues the store's outstanding entries through the underlying queue; no-op without a store.             |
-| `start`   | `void`             | Starts or restarts the underlying queue's worker loops.                                                      |
-| `stop`    | `Promise<void>`    | Stops the queue, rejects pending work, and awaits current-loop and durable cleanup quiescence.               |
-| `pause`   | `void`             | Suspends dequeuing through the underlying queue, leaving in-flight jobs untouched.                           |
-| `resume`  | `void`             | Continues a paused worker through the underlying queue.                                                      |
-| `abort`   | `Promise<void>`    | Cancels in-flight work, rejects pending work, and awaits queue-owned cleanup.                                |
-| `clear`   | `Promise<void>`    | Drops pending jobs and awaits their durable cleanup, leaving in-flight jobs untouched.                       |
-| `destroy` | `Promise<void>`    | Tears down the queue, then the pool, and finally the worker emitter, behind one stable barrier.              |
+| Method    | Returns            | Summary                                                                                                            |
+| --------- | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `enqueue` | `Promise<TResult>` | Submits one job in FIFO order; the handler runs against an acquired resource, released when the job settles.       |
+| `restore` | `Promise<void>`    | Re-enqueues the store's outstanding entries through the underlying queue; no-op without a store.                   |
+| `start`   | `void`             | Starts or restarts the underlying queue's worker loops.                                                            |
+| `stop`    | `Promise<void>`    | Stops the queue, rejects pending work, and awaits current-loop and durable cleanup quiescence.                     |
+| `pause`   | `void`             | Suspends dequeuing through the underlying queue, leaving in-flight jobs untouched.                                 |
+| `resume`  | `void`             | Continues a paused worker through the underlying queue.                                                            |
+| `abort`   | `Promise<void>`    | Cancels in-flight work, rejects pending work, and awaits queue-owned cleanup; an aborted attempt is never retried. |
+| `clear`   | `Promise<void>`    | Drops pending jobs and awaits their durable cleanup, leaving in-flight jobs untouched.                             |
+| `destroy` | `Promise<void>`    | Tears down the queue, then the pool, and finally the worker emitter, behind one stable barrier.                    |
 
 `stop`, `abort`, and `clear` return the exact cleanup promises supplied by the underlying
 queue. `destroy` is its own stable barrier: every call, including a call reentered
@@ -452,12 +446,20 @@ await resumed.restore() // re-enqueues every still-outstanding entry, then runs 
 
 ### Pause, drain, and shut down
 
-Drive the lifecycle between enqueues, and close the worker down when its work is finished:
+Enqueue work, wait for the `drain` event, then drive the lifecycle and close the worker down:
 
 ```ts
 import { createWorker } from '@orkestrel/worker'
 
-const worker = createWorker({ pool: { create: () => connect() }, handler: run })
+const idle = Promise.withResolvers<void>()
+const worker = createWorker({
+	pool: { create: () => connect() },
+	handler: run,
+	on: { drain: () => idle.resolve() }, // fires when nothing is pending and nothing in flight
+})
+
+await worker.enqueue('https://example.com')
+await idle.promise // the queue has drained
 
 worker.pause() // suspends dequeuing; jobs already in flight keep running
 worker.resume() // continues where the pause left off
@@ -466,7 +468,7 @@ await worker.clear() // drops pending jobs and awaits their durable cleanup
 await worker.stop() // rejects pending work and awaits cleanup quiescence
 worker.start() // restarts the loops a stop halted
 
-await worker.abort('shutting down') // cancels in-flight jobs; the worker is terminal after it
+await worker.abort('shutting down') // cancels in-flight jobs; `start` cannot revive the worker
 await worker.destroy() // queue cleanup, then pool cleanup, then emitter teardown
 ```
 
@@ -503,9 +505,11 @@ These tests pin the behaviour this guide documents:
   cell against its declaration's description paragraph, the titled
   `A resource-backed worker` fence against the `@example` block of that title (pinned so
   the titled pair cannot be retired silently), and the README pitch against this guide's
-  tagline. It also transcribes the Threads, NodeWorker, Persistence, and CPU-parallel
-  fences, running each against the real exports and asserting the value its trailing
-  comment claims.
+  tagline. It also transcribes the Threads, NodeWorker, Persistence, CPU-parallel, and
+  lifecycle fences, running each against the real exports: it checks every trailing comment
+  that names a returned value against that value, and checks the lifecycle fence's claims —
+  the `drain` hook, dequeuing suspended while in-flight work runs, the loops restarted after
+  `stop`, and the worker left terminal by `abort`.
 - [`tests/policy.test.ts`](../tests/policy.test.ts) — the fleet placement sweep over
   `src`: every module function sits in a function-kind file, every centralized declaration
   is exported, types sit in `types.ts`, classes match their file, and every module test

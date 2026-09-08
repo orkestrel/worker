@@ -1,8 +1,8 @@
 import type { ServeWorkerOptions } from './types.js'
 import { parentPort } from 'node:worker_threads'
 
-// The worker-side request handler. SELF-CONTAINED by necessity: this module loads as RAW
-// `.ts` inside a spawned thread (Node ≥ 23.6 type-stripping), so it imports ONLY
+// The worker-side request handler. It is self-contained by necessity: this module loads as
+// raw `.ts` inside a spawned thread (Node ≥ 23.6 type-stripping), so it imports only
 // `node:worker_threads` at runtime — no `@src/*`, no `.js`-relative value imports (the
 // only non-node import is the type-only `ServeWorkerOptions`, fully erased at runtime).
 // The inbound envelope is therefore narrowed inline rather than through a sibling guard in
@@ -26,7 +26,7 @@ import { parentPort } from 'node:worker_threads'
  * and restore. That job id identifies work, not a caller, and is not authentication or
  * authorization evidence. Each attempt has its own `AbortController`, so an `abort`
  * message for the correlation id fires the handler's `signal` (cooperative — the main
- * side ALSO terminates the thread, so a handler that ignores its signal is still stopped).
+ * side also terminates the thread, so a handler that ignores its signal is still stopped).
  * Every inbound message is narrowed with the inlined guards — no `as`. On the main thread
  * (`parentPort === null`) it is a no-op.
  *
@@ -81,7 +81,7 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 			controllers.get(id)?.abort()
 			return
 		}
-		// A `run` envelope carries BOTH ids: `id` is the per-dispatch correlation, `job` the
+		// A `run` envelope carries both ids: `id` is the per-dispatch correlation, `job` the
 		// stable Queue entry id handed to the handler. A malformed envelope
 		// without a string `job`, or without an `input` at all, fails closed with no reply.
 		if (command !== 'run' || typeof job !== 'string' || !carried) return

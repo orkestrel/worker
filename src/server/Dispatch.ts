@@ -17,7 +17,7 @@ import { Thread } from './Thread.js'
  * authentication / authorization evidence. Per-job consumer context is explicit,
  * structured-cloneable `input`; ambient context is not worker-thread transport. A success
  * `value` is narrowed through `result` (a value that fails the guard rejects — the zero-`as`
- * type bridge); a failure rejects with the thread's error string. A thread that ALREADY died
+ * type bridge); a failure rejects with the thread's error string. A thread that had already died
  * rejects synchronously at construction from the latched {@link NodeThread.death} — its death
  * events fired before this dispatch existed and will never fire again, so waiting on the
  * listeners would dangle forever; the latch makes death total across every event ordering. If

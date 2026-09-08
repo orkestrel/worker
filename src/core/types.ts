@@ -18,7 +18,11 @@ import type { QueueContext, QueueEntryOptions, QueueStoreInterface } from '@orke
  * routes to the worker emitter's `error` handler). The
  * pool's create / acquire / release events stay the pool's internal concern (a Worker
  * manages its own resources); a consumer who wants them observes a `Pool` directly.
- * Declared as a `type` alias (§4.5).
+ *
+ * Declared as a `type` alias (not `interface extends EventMap` — `EventMap` is a
+ * `type` kind): a type-literal satisfies the `EventMap` constraint
+ * (`Record<string, readonly unknown[]>`) structurally, whereas an interface lacks the
+ * required index signature.
  */
 export type WorkerEventMap<TResult> = {
 	/** Fires when a job is accepted — its id (delegated from the underlying queue's `enqueue`). */
@@ -59,7 +63,7 @@ export type WorkerHandler<TInput, TResource, TResult> = (
  *   deadline.
  * - `store` — durable backing; outstanding entries survive a restart; call
  *   `restore()` to re-run them.
- * - `on` — the reserved {@link EmitterHooks} key (§8): initial listeners for the worker's
+ * - `on` — the reserved {@link EmitterHooks} key: initial listeners for the worker's
  *   {@link WorkerEventMap} (the job lifecycle it surfaces from its underlying queue), wired
  *   at construction.
  */
@@ -113,7 +117,8 @@ export interface WorkerInterface<TInput, TResult> {
 	/** Continues a paused worker through the underlying queue. */
 	resume(): void
 	/**
-	 * Cancels in-flight work, rejects pending work, and awaits queue-owned cleanup.
+	 * Cancels in-flight work, rejects pending work, and awaits queue-owned cleanup; an
+	 * aborted attempt is never retried.
 	 *
 	 * @param reason - Optional cause retained by the queue's coded abort error
 	 * @returns The underlying queue's stable abort barrier
