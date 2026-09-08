@@ -4,18 +4,18 @@ import type { QueueContext, QueueEntryOptions, QueueStoreInterface } from '@orke
 
 /**
  * Represents the push observation surface of a {@link WorkerInterface} — the job
- * lifecycle a fire-and-forget observer subscribes to, surfacing the underlying queue's
- * moments so a Worker consumer never reaches through to the internal `Queue`.
+ * lifecycle a fire-and-forget observer subscribes to.
  *
  * @typeParam TResult - The value a job resolves (the `success` payload), mirroring the
  *   {@link WorkerInterface}'s own `TResult`.
  *
  * @remarks
  * A Worker is a `Queue`⨉`Pool` facade (both from their own `@orkestrel` packages); this
- * map RE-EXPOSES the queue lifecycle the worker surfaces (`enqueue` / `start` / `retry` /
- * `success` / `failure` / `abort` / `drain`) as the worker's OWN events — wired from the
- * underlying queue's emitter at construction, so a buggy observer is isolated exactly as
- * on the queue (a throw routes to the worker emitter's `error` handler). The
+ * map re-exposes the queue lifecycle the worker surfaces (`enqueue` / `start` / `retry` /
+ * `success` / `failure` / `abort` / `drain`) as the worker's own events — wired from the
+ * underlying queue's emitter at construction, so a consumer never reaches through to the
+ * internal `Queue` and a buggy observer is isolated exactly as on the queue (a throw
+ * routes to the worker emitter's `error` handler). The
  * pool's create / acquire / release events stay the pool's internal concern (a Worker
  * manages its own resources); a consumer who wants them observes a `Pool` directly.
  * Declared as a `type` alias (§4.5).
@@ -77,7 +77,8 @@ export interface WorkerOptions<TInput, TResource, TResult> {
 }
 
 /**
- * Represents a resource-backed job worker — a Queue whose handler runs against a pooled resource.
+ * Represents the job-worker contract a consumer holds — a `Queue` whose handler runs each
+ * job against a pooled resource.
  *
  * @remarks
  * Exposes a typed {@link emitter} carrying the job lifecycle
@@ -92,13 +93,24 @@ export interface WorkerInterface<TInput, TResult> {
 	readonly active: number
 	readonly paused: boolean
 	readonly stopped: boolean
+	/**
+	 * Submits one job in FIFO order; the handler runs against an acquired resource, released
+	 * when the job settles.
+	 *
+	 * @param input - The work payload the handler receives
+	 * @param options - Optional id, retry and timeout overrides, and an entry abort signal
+	 * @returns The job's settle-once execution promise
+	 */
 	enqueue(input: TInput, options?: QueueEntryOptions): Promise<TResult>
-	/** Re-enqueues outstanding entries loaded from the store; no-op without a store. */
+	/** Re-enqueues the store's outstanding entries through the underlying queue; no-op without a store. */
 	restore(): Promise<void>
+	/** Starts or restarts the underlying queue's worker loops. */
 	start(): void
-	/** Stops the queue and awaits current-loop and durable cleanup quiescence. */
+	/** Stops the queue, rejects pending work, and awaits current-loop and durable cleanup quiescence. */
 	stop(): Promise<void>
+	/** Suspends dequeuing through the underlying queue, leaving in-flight jobs untouched. */
 	pause(): void
+	/** Continues a paused worker through the underlying queue. */
 	resume(): void
 	/**
 	 * Cancels in-flight work, rejects pending work, and awaits queue-owned cleanup.
@@ -107,10 +119,11 @@ export interface WorkerInterface<TInput, TResult> {
 	 * @returns The underlying queue's stable abort barrier
 	 */
 	abort(reason?: unknown): Promise<void>
-	/** Drops pending work and awaits its durable cleanup. */
+	/** Drops pending jobs and awaits their durable cleanup, leaving in-flight jobs untouched. */
 	clear(): Promise<void>
 	/**
-	 * Tears down the queue, then the pool, and finally the worker emitter.
+	 * Tears down the queue, then the pool, and finally the worker emitter, behind one stable
+	 * barrier.
 	 *
 	 * @returns One stable barrier shared by every call; it rejects with the original sole
 	 *   cleanup failure or an ordered `AggregateError` when both queue and pool fail

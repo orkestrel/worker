@@ -1,22 +1,19 @@
 # @orkestrel/worker
 
-A typed, resource-backed **job worker** for the `@orkestrel` line: a `Worker`
-is a `Queue` (`@orkestrel/queue`) whose handler runs against an automatically
-acquired resource leased from a `Pool` (`@orkestrel/pool`) — released when the
-job settles, even on throw. Composition, not reimplementation: all
-concurrency, retries, per-attempt timeout, abort, and durability are the
-Queue's; all idle reuse and `max` backpressure are the Pool's. The worker is
-observable (a typed `emitter` re-exposes the underlying queue's job lifecycle
-— `enqueue` / `start` / `retry` / `success` / `failure` / `abort` / `drain`).
-For CPU-parallel work, the server surface's `createNodeWorker` specializes the
-core `createWorker` over a pool of `node:worker_threads`, crossing the
-structured-clone boundary with zero `as` through `input` / `result` guards. Each
-thread handler receives `{ id, signal }`: `id` is the Queue's stable idempotency
-key across retries and crash restore, while `signal` is per attempt. The wire
-protocol separately mints a fresh correlation id for each dispatch so a stale
-reply cannot settle a later retry. The stable id identifies work, not a caller,
-and is not authentication or authorization evidence; per-job consumer context
-is explicit, structured-cloneable input rather than ambient thread state.
+> A resource-backed job worker: a thin facade composing a `Queue` (`@orkestrel/queue`) with
+> a `Pool` (`@orkestrel/pool`), where each job's handler runs against an automatically
+> acquired pooled resource released when the job settles.
+
+Create a worker with the `createWorker` function, give it the pool's `create` and
+`destroy` plus the handler each job runs, then `enqueue` inputs and await their
+results. Subscribe to the typed `emitter` for the job lifecycle the worker
+re-exposes from its underlying queue. Reach for the server surface's
+`createNodeWorker` where the work is CPU-bound: it specializes `createWorker`
+over a pool of `node:worker_threads` and crosses the structured-clone boundary
+through `input` and `result` guards with no `as`. A thread handler receives
+`{ id, signal }`: `id` is the Queue's stable idempotency key across retries and
+crash restore, and `signal` is per attempt. That id identifies work, not a
+caller, and is not authentication or authorization evidence.
 Part of the `@orkestrel` line.
 
 ## Install

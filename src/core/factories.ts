@@ -2,12 +2,12 @@ import type { WorkerInterface, WorkerOptions } from './types.js'
 import { Worker } from './Worker.js'
 
 /**
- * Creates a resource-backed job worker — a `Queue` (`@orkestrel/queue`) marrying a `Pool`
- * (`@orkestrel/pool`). Each enqueued input runs through the handler against an
- * automatically acquired pooled resource (released when the job settles), with the
- * queue's bounded concurrency, retries, and per-attempt timeout / abort.
+ * Creates a resource-backed job worker — a `Queue` (`@orkestrel/queue`) composed with a
+ * `Pool` (`@orkestrel/pool`), where each enqueued input runs through the handler against
+ * an automatically acquired pooled resource released when the job settles.
  *
  * @remarks
+ * Bounded concurrency, retries, and the per-attempt timeout and abort are the queue's.
  * Default for the pool's `max`: the `concurrency` value, so resources match the jobs in flight.
  * Resources are reused across jobs. A handler that throws still releases its resource (the
  * acquire/release pair brackets the call in a `finally`), so a later job reuses it. The
@@ -22,10 +22,12 @@ import { Worker } from './Worker.js'
  *   `timeout`, `store`, `on`, and `error` keys (see {@link WorkerOptions})
  * @returns A working {@link WorkerInterface}
  *
- * @example
+ * @example A resource-backed worker
  * ```ts
  * import { createWorker } from '@orkestrel/worker'
  *
+ * // A Queue whose handler runs each job against a pooled resource (acquired before the
+ * // handler, released after it — even on throw). The pool's `max` defaults to `concurrency`.
  * const worker = createWorker<Query, Connection, Rows>({
  * 	pool: { create: () => connect(), destroy: (connection) => connection.close() },
  * 	handler: (query, connection, { signal }) => connection.run(query, signal),
@@ -34,6 +36,7 @@ import { Worker } from './Worker.js'
  * })
  *
  * const rows = await worker.enqueue(query)
+ * await worker.destroy() // awaits queue cleanup, pool cleanup, then emitter teardown
  * ```
  */
 export function createWorker<TInput, TResource, TResult>(

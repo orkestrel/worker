@@ -81,7 +81,7 @@ export function createJSONQueueStore<TInput extends ContractShape>(
 
 /**
  * Creates a CPU-parallel worker over `node:worker_threads` — a thin specialization of the
- * core `createWorker` whose pooled resource is a worker THREAD.
+ * core `createWorker` whose pooled resource is a worker thread.
  *
  * @remarks
  * Composition, not reimplementation: all concurrency, retries, per-attempt timeout,
@@ -92,10 +92,10 @@ export function createJSONQueueStore<TInput extends ContractShape>(
  * internal handler that narrows the input through `options.input` (fail-fast before the
  * structured-clone boundary) then runs a {@link Dispatch} against the leased thread,
  * narrowing the reply through
- * `options.result`. Both generics INFER from the `input` / `result` guards, so call sites
- * need no explicit type arguments. The boundary is crossed with ZERO `as`: the guards
- * reconstruct `TInput` / `TResult` by validation. An `abort` / `timeout`
- * TERMINATES the in-flight thread (CPU-bound work can't honour a signal) and evicts it; a
+ * `options.result`. `TInput` and `TResult` infer from the `input` and `result` guards, so
+ * call sites need no explicit type arguments. The boundary is crossed with no `as`: the
+ * guards reconstruct `TInput` / `TResult` by validation. An `abort` / `timeout`
+ * terminates the in-flight thread (CPU-bound work can't honour a signal) and evicts it; a
  * subsequent job spawns a fresh thread. The worker script's module must call
  * `serveWorker`. Returns the plain {@link WorkerInterface} — its methods are the Worker's.
  *
