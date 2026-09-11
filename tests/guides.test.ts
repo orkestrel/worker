@@ -2,45 +2,21 @@
 // this repo's own `guides/README.md` manifest. The constants that follow are this
 // package's own, as is the executed section that closes the file.
 
-import { describe, expect, it } from 'vitest'
-import {
-	computeSymbolKey,
-	createGuide,
-	createSource,
-	createSourceManager,
-	extractFenceImports,
-	findDrift,
-	findMissing,
-	findMissingSymbols,
-	findUnexampled,
-	findUnlisted,
-	isExternalLink,
-	parseManifest,
-	resolveLink,
-} from '@orkestrel/guide'
-import { readFileSync } from 'node:fs'
-import { isNumber, stringShape } from '@orkestrel/contract'
-import { requireValue, waitForCondition } from '@orkestrel/test'
+import { GuideCommand } from '@orkestrel/guide/server'
 import { readInventory } from '@orkestrel/test/server'
-import { createWorker } from '@src/core'
-import {
-	createJSONQueueStore,
-	createNodeWorker,
-	createThread,
-	Dispatch,
-	isReply,
-} from '@src/server'
-import { buildFixtureURL, tempDatabasePath } from './setupServer.js'
+import { createVitest } from 'vitest/node'
 
 /** Every fence language this package's guides are allowed to use. */
 const FENCE_LANGUAGES = Object.freeze(['ts'])
 /** The fence language whose blocks count as worked examples. */
 const EXAMPLE_LANGUAGE = 'ts'
+/** The package identity that binds its manifest, module map, and README pitch. */
+const PACKAGE_NAME = '@orkestrel/worker'
 /** The one guide this package sources, whose tagline the README pitch equals. */
 const GUIDE_SPEC = 'guides/worker.md'
 /** Each import specifier this package's own guides may resolve against. */
 const MODULES = Object.freeze({
-	'@orkestrel/worker': 'src/core',
+	[PACKAGE_NAME]: 'src/core',
 	'@src/core': 'src/core',
 	'@src/server': 'src/server',
 })
@@ -56,360 +32,332 @@ const MODULES = Object.freeze({
  */
 const INTERNAL: readonly string[] = Object.freeze(['class NodeWorker', 'class Thread'])
 
-/** Root-level files these checks read. `readInventory` walks directories only. */
-const ROOT_FILES = Object.freeze(['AGENTS.md', 'README.md'])
+await new GuideCommand({
+	root: new URL('../', import.meta.url),
+	patterns: ['src/**/*.ts', 'tests/**/*.ts', 'guides/*.md', '*.md', 'package.json'],
+	modules: MODULES,
+	languages: FENCE_LANGUAGES,
+	language: EXAMPLE_LANGUAGE,
+	reader: readInventory,
+	runner: createVitest,
+}).execute(async ({ files, report, rows }) => {
+	const { isNumber, isRecord, parseJSON, stringShape } = await import('@orkestrel/contract')
+	const {
+		computeSymbolKey,
+		createSourceManager,
+		extractFenceImports,
+		findMissing,
+		findMissingSymbols,
+		findUnexampled,
+		isExternalLink,
+		resolveLink,
+	} = await import('@orkestrel/guide')
+	const { requireValue, waitForCondition } = await import('@orkestrel/test')
+	const { createWorker } = await import('@src/core')
+	const { createJSONQueueStore, createNodeWorker, createThread, Dispatch, isReply } =
+		await import('@src/server')
+	const { buildFixtureURL, tempDatabasePath } = await import('./setupServer.js')
+	const { describe, expect, it } = await import('vitest')
+	const sources = createSourceManager({ files, modules: MODULES })
+	const own = requireValue(
+		rows.find((row) => row.entry.spec === GUIDE_SPEC),
+		`Missing manifest row: ${GUIDE_SPEC}`,
+	)
+	const manifest = parseJSON(requireValue(files['package.json'], 'Missing inventory: package.json'))
+	if (!isRecord(manifest)) throw new Error('Invalid package manifest: package.json')
 
-const root = new URL('../', import.meta.url)
-const files: Record<string, string> = {
-	...readInventory(root, ['src', 'guides', 'tests'], { extensions: ['.ts', '.md'] }),
-}
-for (const name of ROOT_FILES) files[name] = readFileSync(new URL(name, root), 'utf8')
-const manifest = parseManifest(
-	requireValue(files['guides/README.md'], 'Missing file: guides/README.md'),
-	'guides',
-)
-const sources = createSourceManager({ files, modules: MODULES })
-const own = requireValue(
-	manifest.find((entry) => entry.spec === GUIDE_SPEC),
-	`Missing manifest row: ${GUIDE_SPEC}`,
-)
+	it('manifest lists at least one guide', () => {
+		expect(report.input).toEqual([])
+		expect(rows.length).toBeGreaterThan(0)
+		expect(own.entry.spec).toBe(GUIDE_SPEC)
+	})
 
-it('manifest lists at least one guide', () => {
-	expect(manifest.length).toBeGreaterThan(0)
-})
+	// The example half of the equality case is silent over an empty population: with no
+	// title on both sides `findDrift` compares no pair and the case passes on the summaries
+	// alone. This pins the population this repository's own guide contributes, so removing
+	// every `@example` title reddens the suite instead of quietly retiring half the gate.
+	// The failure names both title sets, because a pin reporting only its own emptiness
+	// leaves the reader to work out which side dropped the title.
+	it('pairs at least one example title across the guide and the source', () => {
+		expect(report.examples.titles.filter((finding) => finding.spec === GUIDE_SPEC)).toEqual([])
+	})
 
-// The example half of the equality case is silent over an empty population: with no
-// title on both sides `findDrift` compares no pair and the case passes on the summaries
-// alone. This pins the population this repository's own guide contributes, so removing
-// every `@example` title reddens the suite instead of quietly retiring half the gate.
-// The failure names both title sets, because a pin reporting only its own emptiness
-// leaves the reader to work out which side dropped the title.
-it('pairs at least one example title across the guide and the source', () => {
-	const guide = createGuide(requireValue(files[GUIDE_SPEC], `Missing file: ${GUIDE_SPEC}`))
-	const source = createSource({ files, module: own.source })
-	const declared = source
-		.examples()
-		.map((example) => example.title)
-		.filter((title) => title !== undefined)
-	const titled = new Set(declared)
-	const headings: string[] = []
-	const paired: string[] = []
-	for (const fence of guide.fences()) {
-		if (fence.title === undefined) continue
-		headings.push(fence.title)
-		if (titled.has(fence.title)) paired.push(fence.title)
-	}
-	const unpaired =
-		paired.length > 0
-			? []
-			: [
-					`${GUIDE_SPEC} pairs: guide ${JSON.stringify(headings)} source ${JSON.stringify(declared)}`,
-				]
-	expect(unpaired).toEqual([])
-})
+	// The README's pitch and the guide's tagline are one text, each read as the blockquote
+	// under its file's H1. `README.md` is outside the concept index, so the reader is
+	// applied to it directly rather than through a manifest row. Each side is guarded
+	// against `undefined` first, so a file that lost its blockquote reports that rather
+	// than reporting missing blockquotes as agreement.
+	it('opens the README with the guide tagline', () => {
+		expect(manifest.name).toBe(PACKAGE_NAME)
+		expect(report.pitch).toEqual([])
+	})
 
-// The README's pitch and the guide's tagline are one text, each read as the blockquote
-// under its file's H1. `README.md` is outside the concept index, so the reader is
-// applied to it directly rather than through a manifest row. Each side is guarded
-// against `undefined` first, so a file that lost its blockquote reports that rather
-// than reporting two absences as agreement.
-it('opens the README with the guide tagline', () => {
-	const pitch = createGuide(requireValue(files['README.md'], 'Missing file: README.md')).tagline()
-	const tagline = createGuide(
-		requireValue(files[GUIDE_SPEC], `Missing file: ${GUIDE_SPEC}`),
-	).tagline()
+	it('keeps internal orchestration classes out of the public server barrel', () => {
+		const barrel = requireValue(files['src/server/index.ts'], 'Missing file: src/server/index.ts')
+		const names = ['NodeWorker', 'Thread']
+		expect(names.every((name) => !barrel.includes(`./${name}.js`))).toBe(true)
+	})
 
-	expect(pitch).not.toBeUndefined()
-	expect(tagline).not.toBeUndefined()
-	expect(pitch).toBe(tagline)
-})
-
-it('keeps internal orchestration classes out of the public server barrel', () => {
-	const barrel = requireValue(files['src/server/index.ts'], 'Missing file: src/server/index.ts')
-	const names = ['NodeWorker', 'Thread']
-	expect(names.every((name) => !barrel.includes(`./${name}.js`))).toBe(true)
-})
-
-for (const entry of manifest) {
-	const guide = createGuide(requireValue(files[entry.spec], `Missing file: ${entry.spec}`))
-	const source = createSource({ files, module: entry.source })
-
-	describe(`${entry.concept}`, () => {
-		it('uses only listed fence languages', () => {
-			expect(findUnlisted(guide.fences(), FENCE_LANGUAGES)).toEqual([])
-		})
-
-		it('extracts a non-empty documented surface', () => {
-			expect(guide.surface().length).toBeGreaterThan(0)
-		})
-		it('re-exports every direct declaration that is not named internal', () => {
-			const stranded = findMissingSymbols(source.exports(), source.surface())
-			expect(stranded.filter((key) => !INTERNAL.includes(key))).toEqual([])
-		})
-		it('names no symbol internal that the barrel already exports', () => {
-			const stranded = findMissingSymbols(source.exports(), source.surface())
-			expect(INTERNAL.filter((key) => !stranded.includes(key))).toEqual([])
-		})
-		it('re-exports only direct declarations', () => {
-			expect(findMissingSymbols(source.surface(), source.exports())).toEqual([])
-		})
-		it('documents every barrel export', () => {
-			expect(findMissingSymbols(source.surface(), guide.surface())).toEqual([])
-		})
-		it('documents only barrel exports', () => {
-			expect(findMissingSymbols(guide.surface(), source.surface())).toEqual([])
-		})
-
-		it('exposes no hidden module-scope declarations', () => {
-			expect(source.hidden().map(computeSymbolKey)).toEqual([])
-		})
-
-		for (const group of guide.methods()) {
-			const members = source.methods(group.interface).map((method) => method.name)
-			const documented = group.methods.map((method) => method.name)
-			const entity = group.interface.replace(/Interface$/, '')
-			describe(`${group.interface}`, () => {
-				it('documents at least one method', () => {
-					expect(group.methods.length).toBeGreaterThan(0)
-				})
-				it('documents every interface method', () => {
-					expect(findMissing(members, documented)).toEqual([])
-				})
-				it('documents no phantom method', () => {
-					expect(findMissing(documented, members)).toEqual([])
-				})
-				it(`${entity} exposes no undocumented method`, () => {
-					const extra =
-						entity === group.interface
-							? []
-							: findMissing(
-									source.methods(entity).map((method) => method.name),
-									documented,
-								)
-					expect(extra).toEqual([])
-				})
+	for (const { entry, guide, source } of rows) {
+		describe(`${entry.concept}`, () => {
+			it('uses only listed fence languages', () => {
+				expect(report.fences.filter((finding) => finding.spec === entry.spec)).toEqual([])
 			})
-		}
 
-		// The equality gate: a `Summary` cell against its export's description paragraph, a
-		// titled fence against the `@example` of that title. `findDrift` owns the comparison
-		// and names both sides; converge the two sides with `npm run docs`, never by
-		// weakening this assertion. `findDrift` pairs an example only where a title is
-		// present on both sides, so an untitled `@example` block is outside this case. Each
-		// collected line is the spec, the key, and each side's text or `absent` — the same
-		// worklist `npm run docs` prints, so a failure here is read the way that command's
-		// output is.
-		it('keeps every compared summary and example equal to its source', () => {
-			const disagreeing: string[] = []
-			for (const drift of findDrift(guide, source)) {
-				const left = drift.guide === undefined ? 'absent' : JSON.stringify(drift.guide)
-				const right = drift.source === undefined ? 'absent' : JSON.stringify(drift.source)
-				disagreeing.push(`${entry.spec} ${drift.key}: guide ${left} source ${right}`)
+			it('extracts a non-empty documented surface', () => {
+				expect(guide.surface().length).toBeGreaterThan(0)
+			})
+			it('re-exports every direct declaration that is not named internal', () => {
+				const stranded = findMissingSymbols(source.exports(), source.surface())
+				expect(stranded.filter((key) => !INTERNAL.includes(key))).toEqual([])
+			})
+			it('names no symbol internal that the barrel already exports', () => {
+				const stranded = findMissingSymbols(source.exports(), source.surface())
+				expect(INTERNAL.filter((key) => !stranded.includes(key))).toEqual([])
+			})
+			it('re-exports only direct declarations', () => {
+				expect(findMissingSymbols(source.surface(), source.exports())).toEqual([])
+			})
+			it('documents every barrel export', () => {
+				expect(findMissingSymbols(source.surface(), guide.surface())).toEqual([])
+			})
+			it('documents only barrel exports', () => {
+				expect(findMissingSymbols(guide.surface(), source.surface())).toEqual([])
+			})
+
+			it('exposes no hidden module-scope declarations', () => {
+				expect(source.hidden().map(computeSymbolKey)).toEqual([])
+			})
+
+			for (const group of guide.methods()) {
+				const members = source.methods(group.interface).map((method) => method.name)
+				const documented = group.methods.map((method) => method.name)
+				const entity = group.interface.replace(/Interface$/, '')
+				describe(`${group.interface}`, () => {
+					it('documents at least one method', () => {
+						expect(group.methods.length).toBeGreaterThan(0)
+					})
+					it('documents every interface method', () => {
+						expect(findMissing(members, documented)).toEqual([])
+					})
+					it('documents no phantom method', () => {
+						expect(findMissing(documented, members)).toEqual([])
+					})
+					it(`${entity} exposes no undocumented method`, () => {
+						const extra =
+							entity === group.interface
+								? []
+								: findMissing(
+										source.methods(entity).map((method) => method.name),
+										documented,
+									)
+						expect(extra).toEqual([])
+					})
+				})
 			}
-			expect(disagreeing).toEqual([])
-		})
 
-		it('documents an example for every Surface function', () => {
-			const fences = guide
-				.fences()
-				.filter((fence) => fence.language === EXAMPLE_LANGUAGE)
-				.map((fence) => fence.code)
-			const names = guide
-				.surface()
-				.filter((symbol) => symbol.keyword === 'function')
-				.map((symbol) => symbol.name)
-			expect(
-				findUnexampled(
-					names,
-					fences,
-					source.examples().map((example) => example.name),
-				),
-			).toEqual([])
-		})
-
-		for (const group of guide.methods()) {
-			const entity = group.interface.replace(/Interface$/, '')
-			const documented = group.methods.map((method) => method.name)
-			const examples =
-				entity === group.interface
-					? source.examples(group.interface).map((example) => example.name)
-					: source
-							.examples(group.interface)
-							.map((example) => example.name)
-							.concat(source.examples(entity).map((example) => example.name))
-			describe(`${group.interface} examples`, () => {
-				it('documents an example for every method', () => {
-					const fences = guide
-						.fences()
-						.filter((fence) => fence.language === EXAMPLE_LANGUAGE)
-						.map((fence) => fence.code)
-					expect(findUnexampled(documented, fences, examples)).toEqual([])
-				})
+			// The equality gate: a `Summary` cell against its export's description paragraph, a
+			// titled fence against the `@example` of that title. `findDrift` owns the comparison
+			// and names the guide and source; converge them with `npm run test:guides`, never by
+			// weakening this assertion. `findDrift` pairs an example only where a title is
+			// present on both sides, so an untitled `@example` block is outside this case. Each
+			// collected line is the spec, the key, and each side's text or `absent` — the same
+			// worklist `npm run test:guides` prints, so a failure here is read the way that command's
+			// output is.
+			it('keeps every compared summary and example equal to its source', () => {
+				expect(report.drift.filter((finding) => finding.spec === entry.spec)).toEqual([])
 			})
-		}
 
-		it('imports only real exports in every ```ts fence', () => {
-			const fences = guide.fences().filter((fence) => fence.language === EXAMPLE_LANGUAGE)
-			for (const fence of fences) {
-				for (const { specifier, names } of extractFenceImports(fence.code)) {
-					const imported = sources.source(specifier)
-					if (imported === undefined) continue
-					const surface = imported.surface().map((symbol) => symbol.name)
-					expect(findMissing(names, surface)).toEqual([])
+			it('documents an example for every Surface function', () => {
+				expect(report.examples.functions.filter((finding) => finding.spec === entry.spec)).toEqual(
+					[],
+				)
+			})
+
+			for (const group of guide.methods()) {
+				const entity = group.interface.replace(/Interface$/, '')
+				const documented = group.methods.map((method) => method.name)
+				const examples =
+					entity === group.interface
+						? source.examples(group.interface).map((example) => example.name)
+						: source
+								.examples(group.interface)
+								.map((example) => example.name)
+								.concat(source.examples(entity).map((example) => example.name))
+				describe(`${group.interface} examples`, () => {
+					it('documents an example for every method', () => {
+						const fences = guide
+							.fences()
+							.filter((fence) => fence.language === EXAMPLE_LANGUAGE)
+							.map((fence) => fence.code)
+						expect(findUnexampled(documented, fences, examples)).toEqual([])
+					})
+				})
+			}
+
+			it('imports only real exports in every ```ts fence', () => {
+				const fences = guide.fences().filter((fence) => fence.language === EXAMPLE_LANGUAGE)
+				for (const fence of fences) {
+					for (const { specifier, names } of extractFenceImports(fence.code)) {
+						const imported = sources.source(specifier)
+						if (imported === undefined) continue
+						const surface = imported.surface().map((symbol) => symbol.name)
+						expect(findMissing(names, surface)).toEqual([])
+					}
 				}
+			})
+
+			it('resolves every relative link', () => {
+				const broken = guide
+					.links()
+					.filter((href) => !isExternalLink(href))
+					.map((href) => resolveLink(entry.spec, href))
+					.filter((path) => !source.exists(path))
+				expect(broken).toEqual([])
+			})
+			it('links only to test files that exist', () => {
+				const missing = guide
+					.tests()
+					.map((href) => resolveLink(entry.spec, href))
+					.filter((path) => !source.exists(path))
+				expect(missing).toEqual([])
+			})
+		})
+	}
+
+	// Every preceding assertion proves a name resolves; none proves a value. The flagship fences in
+	// `guides/worker.md` each state a value in a trailing comment, so they are transcribed here
+	// and run against the real exports — a fence whose comment stops matching what the code
+	// returns reddens one of these. Change a fence, change its transcription.
+	describe('worker.md fences return the values they claim', () => {
+		it('the Threads fence drives one thread by hand and filters its replies', async () => {
+			const thread = await createThread(buildFixtureURL('double.ts'))
+			const controller = new AbortController()
+			try {
+				const job = new Dispatch(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
+				expect(await job.promise).toBe(42)
+				expect(isReply({ id: 'reply-1', ok: true, value: 42 }, 'reply-1')).toBe(true)
+				expect(isReply({ id: 'reply-1', ok: true, value: 42 }, 'other')).toBe(false)
+			} finally {
+				await thread.worker.terminate()
 			}
 		})
 
-		it('resolves every relative link', () => {
-			const broken = guide
-				.links()
-				.filter((href) => !isExternalLink(href))
-				.map((href) => resolveLink(entry.spec, href))
-				.filter((path) => !source.exists(path))
-			expect(broken).toEqual([])
+		it('the NodeWorker fence doubles 21 on a worker thread', async () => {
+			const worker = createNodeWorker({
+				script: buildFixtureURL('double.ts'),
+				input: isNumber,
+				result: isNumber,
+				concurrency: 4,
+				retries: 1,
+			})
+			try {
+				await expect(worker.enqueue(21)).resolves.toBe(42)
+			} finally {
+				await worker.destroy()
+			}
 		})
-		it('links only to test files that exist', () => {
-			const missing = guide
-				.tests()
-				.map((href) => resolveLink(entry.spec, href))
-				.filter((path) => !source.exists(path))
-			expect(missing).toEqual([])
-		})
-	})
-}
 
-// Every preceding assertion proves a name resolves; none proves a value. The flagship fences in
-// `guides/worker.md` each state a value in a trailing comment, so they are transcribed here
-// and run against the real exports — a fence whose comment stops matching what the code
-// returns reddens one of these. Change a fence, change its transcription.
-describe('worker.md fences return the values they claim', () => {
-	it('the Threads fence drives one thread by hand and filters its replies', async () => {
-		const thread = await createThread(buildFixtureURL('double.ts'))
-		const controller = new AbortController()
-		try {
-			const job = new Dispatch(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
-			expect(await job.promise).toBe(42)
-			expect(isReply({ id: 'reply-1', ok: true, value: 42 }, 'reply-1')).toBe(true)
-			expect(isReply({ id: 'reply-1', ok: true, value: 42 }, 'other')).toBe(false)
-		} finally {
-			await thread.worker.terminate()
-		}
-	})
+		it('the Persistence fence resumes the prior process outstanding entry', async () => {
+			const { path, scratch } = tempDatabasePath()
+			try {
+				const store = createJSONQueueStore(path, stringShape())
+				await store.save({ id: 'job-1', input: 'https://example.com', attempts: 0 })
 
-	it('the NodeWorker fence doubles 21 on a worker thread', async () => {
-		const worker = createNodeWorker({
-			script: buildFixtureURL('double.ts'),
-			input: isNumber,
-			result: isNumber,
-			concurrency: 4,
-			retries: 1,
+				const resumed = createJSONQueueStore(path, stringShape())
+				const work = await resumed.load()
+				expect(work).toEqual([{ id: 'job-1', input: 'https://example.com', attempts: 0 }])
+			} finally {
+				scratch.destroy()
+			}
 		})
-		try {
-			await expect(worker.enqueue(21)).resolves.toBe(42)
-		} finally {
+
+		it('the CPU-parallel patterns fence doubles 21 over a thread pool', async () => {
+			const worker = createNodeWorker({
+				script: buildFixtureURL('double.ts'),
+				input: isNumber,
+				result: isNumber,
+				concurrency: 4,
+			})
+			try {
+				await expect(worker.enqueue(21)).resolves.toBe(42)
+			} finally {
+				await worker.destroy()
+			}
+		})
+
+		// The lifecycle fence states its claims in comments rather than in returned values, so
+		// each comment is asserted here against a real `createWorker`: the `drain` hook firing
+		// when the queue empties, `pause` suspending dequeuing while in-flight work runs to
+		// completion, `clear` rejecting a pending job, `stop` refusing new work, `start`
+		// restarting the loops, and `abort` leaving the worker terminal.
+		it('the lifecycle fence drains, suspends dequeuing, restarts after stop, and is terminal after abort', async () => {
+			const gate = Promise.withResolvers<void>()
+			const idle = Promise.withResolvers<void>()
+			const started: string[] = []
+			const worker = createWorker<string, { readonly id: number }, string>({
+				pool: { create: () => ({ id: 1 }) },
+				handler: async (input) => {
+					started.push(input)
+					if (input === 'blocking') await gate.promise
+					return input
+				},
+				on: { drain: () => idle.resolve() },
+			})
+
+			await expect(worker.enqueue('first')).resolves.toBe('first')
+			await idle.promise
+			expect(worker.count).toBe(0)
+			expect(worker.active).toBe(0)
+
+			const blocking = worker.enqueue('blocking')
+			await waitForCondition('the blocking job is in flight', () => worker.active === 1, {
+				budget: 1000,
+				interval: 5,
+			})
+			worker.pause()
+			expect(worker.paused).toBe(true)
+			const parked = worker.enqueue('parked')
+			gate.resolve()
+			await expect(blocking).resolves.toBe('blocking')
+			await waitForCondition('the blocking job leaves the queue', () => worker.active === 0, {
+				budget: 1000,
+				interval: 5,
+			})
+			expect(started).toEqual(['first', 'blocking'])
+			expect(worker.count).toBe(1)
+
+			worker.resume()
+			expect(worker.paused).toBe(false)
+			await expect(parked).resolves.toBe('parked')
+
+			worker.pause()
+			const dropped = worker.enqueue('dropped')
+			const droppedOutcome = dropped.then(
+				() => undefined,
+				(error: unknown) => error,
+			)
+			await worker.clear()
+			const droppedError = await droppedOutcome
+			expect(droppedError).toBeInstanceOf(Error)
+			expect(String(droppedError)).toContain('queue is cleared')
+			worker.resume()
+
+			await worker.stop()
+			expect(worker.stopped).toBe(true)
+			await expect(worker.enqueue('while stopped')).rejects.toThrow('queue is stopped')
+
+			worker.start()
+			expect(worker.stopped).toBe(false)
+			await expect(worker.enqueue('restarted')).resolves.toBe('restarted')
+
+			await worker.abort('shutting down')
+			expect(worker.stopped).toBe(true)
+			worker.start()
+			expect(worker.stopped).toBe(true)
+			await expect(worker.enqueue('after abort')).rejects.toThrow('queue is aborted')
+
 			await worker.destroy()
-		}
-	})
-
-	it('the Persistence fence resumes the prior process outstanding entry', async () => {
-		const { path, scratch } = tempDatabasePath()
-		try {
-			const store = createJSONQueueStore(path, stringShape())
-			await store.save({ id: 'job-1', input: 'https://example.com', attempts: 0 })
-
-			const resumed = createJSONQueueStore(path, stringShape())
-			const work = await resumed.load()
-			expect(work).toEqual([{ id: 'job-1', input: 'https://example.com', attempts: 0 }])
-		} finally {
-			scratch.destroy()
-		}
-	})
-
-	it('the CPU-parallel patterns fence doubles 21 over a thread pool', async () => {
-		const worker = createNodeWorker({
-			script: buildFixtureURL('double.ts'),
-			input: isNumber,
-			result: isNumber,
-			concurrency: 4,
 		})
-		try {
-			await expect(worker.enqueue(21)).resolves.toBe(42)
-		} finally {
-			await worker.destroy()
-		}
-	})
-
-	// The lifecycle fence states its claims in comments rather than in returned values, so
-	// each comment is asserted here against a real `createWorker`: the `drain` hook firing
-	// when the queue empties, `pause` suspending dequeuing while in-flight work runs to
-	// completion, `clear` rejecting a pending job, `stop` refusing new work, `start`
-	// restarting the loops, and `abort` leaving the worker terminal.
-	it('the lifecycle fence drains, suspends dequeuing, restarts after stop, and is terminal after abort', async () => {
-		const gate = Promise.withResolvers<void>()
-		const idle = Promise.withResolvers<void>()
-		const started: string[] = []
-		const worker = createWorker<string, { readonly id: number }, string>({
-			pool: { create: () => ({ id: 1 }) },
-			handler: async (input) => {
-				started.push(input)
-				if (input === 'blocking') await gate.promise
-				return input
-			},
-			on: { drain: () => idle.resolve() },
-		})
-
-		await expect(worker.enqueue('first')).resolves.toBe('first')
-		await idle.promise
-		expect(worker.count).toBe(0)
-		expect(worker.active).toBe(0)
-
-		const blocking = worker.enqueue('blocking')
-		await waitForCondition('the blocking job is in flight', () => worker.active === 1, {
-			budget: 1000,
-			interval: 5,
-		})
-		worker.pause()
-		expect(worker.paused).toBe(true)
-		const parked = worker.enqueue('parked')
-		gate.resolve()
-		await expect(blocking).resolves.toBe('blocking')
-		await waitForCondition('the blocking job leaves the queue', () => worker.active === 0, {
-			budget: 1000,
-			interval: 5,
-		})
-		expect(started).toEqual(['first', 'blocking'])
-		expect(worker.count).toBe(1)
-
-		worker.resume()
-		expect(worker.paused).toBe(false)
-		await expect(parked).resolves.toBe('parked')
-
-		worker.pause()
-		const dropped = worker.enqueue('dropped')
-		const droppedOutcome = dropped.then(
-			() => undefined,
-			(error: unknown) => error,
-		)
-		await worker.clear()
-		const droppedError = await droppedOutcome
-		expect(droppedError).toBeInstanceOf(Error)
-		expect(String(droppedError)).toContain('queue is cleared')
-		worker.resume()
-
-		await worker.stop()
-		expect(worker.stopped).toBe(true)
-		await expect(worker.enqueue('while stopped')).rejects.toThrow('queue is stopped')
-
-		worker.start()
-		expect(worker.stopped).toBe(false)
-		await expect(worker.enqueue('restarted')).resolves.toBe('restarted')
-
-		await worker.abort('shutting down')
-		expect(worker.stopped).toBe(true)
-		worker.start()
-		expect(worker.stopped).toBe(true)
-		await expect(worker.enqueue('after abort')).rejects.toThrow('queue is aborted')
-
-		await worker.destroy()
 	})
 })
