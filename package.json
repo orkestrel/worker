@@ -84,18 +84,18 @@
 		"docs": "node --experimental-strip-types scripts/docs.ts"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.16",
-		"@orkestrel/database": "^0.0.13",
-		"@orkestrel/emitter": "^0.0.9",
-		"@orkestrel/pool": "^0.0.10",
-		"@orkestrel/queue": "^0.0.12"
+		"@orkestrel/contract": "^0.0.17",
+		"@orkestrel/database": "^0.0.14",
+		"@orkestrel/emitter": "^0.0.10",
+		"@orkestrel/pool": "^0.0.11",
+		"@orkestrel/queue": "^0.0.13"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.59.0",
-		"@orkestrel/guide": "^0.0.17",
+		"@orkestrel/guide": "^0.0.18",
 		"@orkestrel/probe": "^0.0.12",
-		"@orkestrel/scaffold": "^0.0.63",
-		"@orkestrel/test": "^0.0.13",
+		"@orkestrel/scaffold": "^0.0.64",
+		"@orkestrel/test": "^0.0.14",
 		"@types/node": "^26.4.1",
 		"oxfmt": "^0.66.0",
 		"oxlint": "^1.81.0",
