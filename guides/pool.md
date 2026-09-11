@@ -2,14 +2,21 @@
 
 > A typed resource pool with optional bounded capacity, unique ownership, FIFO settlement,
 > validated reuse, caller-owned cancellation, explicit cleanup failures, and a stable
-> event-driven teardown barrier. It has no warm floor, eviction timer, acquire timeout, or
-> polling loop.
+> event-driven teardown barrier.
+
+The pool has no warm floor, eviction timer, acquire timeout, or polling loop. Every wait parks
+on a promise or a signal listener and wakes when a settlement reaches it, and the lifecycle
+hooks are the caller's, so the engine itself performs no I/O.
 
 ## Surface
 
 `createPool` constructs the interface-oriented form; `Pool` exposes the same contract as a
 class. Each created value receives an opaque ownership record, so duplicate primitives,
 `undefined`, `NaN`, and repeated references are independent resources.
+
+### Create a pool
+
+Construct a pool from create, destroy, and validate hooks, then acquire and release one token:
 
 ```ts
 import { createPool } from '@orkestrel/pool'
@@ -31,38 +38,41 @@ try {
 
 ### Factories
 
-| API          | Kind     | Summary                                                             |
-| ------------ | -------- | ------------------------------------------------------------------- |
-| `createPool` | function | Construct a distinct `PoolInterface` from resource lifecycle hooks. |
+| API          | Kind     | Summary                                                                                                                                  |
+| ------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `createPool` | function | Creates a distinct `PoolInterface` from resource lifecycle hooks, with optional bounded capacity, unique ownership, and FIFO settlement. |
 
-### Entities
+### Classes
 
-| API         | Kind  | Summary                                                                |
-| ----------- | ----- | ---------------------------------------------------------------------- |
-| `Pool`      | class | The unique-record FIFO lifecycle engine.                               |
-| `PoolError` | class | A coded failure retaining a hostile-safe cause and structured context. |
+| API         | Kind  | Summary                                                                                                                                                                                  |
+| ----------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Pool`      | class | Represents a capacity-aware resource pool whose opaque ownership records preserve FIFO settlement, cancellation, exact lease release, and deterministic teardown under concurrent hooks. |
+| `PoolError` | class | Represents a stable, machine-readable pool failure that retains the original thrown value as its cause without unsafe coercion, alongside structured context.                            |
 
 ### Guards
 
-| API            | Kind     | Summary                                                      |
-| -------------- | -------- | ------------------------------------------------------------ |
-| `isPoolError`  | function | Total guard for `PoolError`, including hostile proxy inputs. |
-| `isPoolMax`    | function | Accept only positive safe integers as explicit pool maxima.  |
-| `isPoolSignal` | function | Total native `AbortSignal` guard for the acquire boundary.   |
+In a guard table a `Shape` cell holds the type the guard narrows to.
+
+| API            | Kind     | Shape         | Summary                                                                                                          |
+| -------------- | -------- | ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `isPoolError`  | function | `PoolError`   | Tests whether an unknown value is a `PoolError`, returning `false` for hostile proxies.                          |
+| `isPoolMax`    | function | `number`      | Tests whether a value is a positive safe integer, the only valid explicit pool maximum.                          |
+| `isPoolSignal` | function | `AbortSignal` | Tests whether a value is a native `AbortSignal` for the acquire boundary, returning `false` for hostile proxies. |
 
 ### Types
 
-| API                | Kind      | Summary                                                          |
-| ------------------ | --------- | ---------------------------------------------------------------- |
-| `PoolCode`         | type      | `invalid`, `destroyed`, `create`, or `cleanup`.                  |
-| `PoolContext`      | interface | Rejected input or distinct aggregate destroy-hook failures.      |
-| `PoolErrorOptions` | interface | Code, optional cause, and optional context for `PoolError`.      |
-| `PoolEventMap`     | type      | `create`, `acquire`, `release`, and `destroy` lifecycle signals. |
-| `PoolToken`        | interface | A unique lease with readonly `value` and idempotent `release()`. |
-| `PoolOptions`      | interface | Create, destroy, validation, capacity, and emitter options.      |
-| `PoolInterface`    | interface | Count/emitter properties plus `acquire`, `clear`, and `destroy`. |
+A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
 
-`PoolInterface.emitter`, `size`, `idle`, and `active` are readonly data properties.
+| API                | Kind      | Shape                                                          | Summary                                                                                                                                                     |
+| ------------------ | --------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PoolCode`         | type      | `'invalid' \| 'destroyed' \| 'create' \| 'cleanup'`            | Names the machine-readable failure codes produced by `PoolError`.                                                                                           |
+| `PoolContext`      | interface | `{ value?, failures? }`                                        | Represents the structured context attached to a `PoolError`: the rejected input, or the distinct destroy-hook failures an aggregate cleanup collected.      |
+| `PoolErrorOptions` | interface | `{ code, cause?, context? }`                                   | Represents the construction options for `PoolError`: the stable code, an optional cause, and optional structured context.                                   |
+| `PoolEventMap`     | type      | `{ create, acquire, release, destroy }`                        | Represents the observable resource lifecycle events emitted by a `PoolInterface`.                                                                           |
+| `PoolToken`        | interface | `{ value } plus release`                                       | Represents a unique lease over one pool-owned resource record, exposing that record as a readonly `value` and returning it through an idempotent `release`. |
+| `PoolOptions`      | interface | `{ on?, error?, create, destroy?, validate?, max? }`           | Represents the resource lifecycle options for `Pool` and `createPool`: creation, destruction, validation, capacity, and observation.                        |
+| `PoolInterface`    | interface | `{ emitter, size, idle, active } plus acquire, clear, destroy` | Represents a FIFO resource pool with optional bounded capacity and deterministic teardown, exposing its record counts and a typed lifecycle emitter.        |
+
 `size` counts every owned record, including records being validated or destroyed. `idle`
 counts only immediately available records. `active` counts only leased records. An in-flight
 create reservation claims capacity but is not yet an owned record and therefore is not part
@@ -75,25 +85,25 @@ The public call-signature members of `PoolInterface` and `PoolToken`; `Pool` imp
 
 #### `PoolInterface`
 
-| Method    | Returns                 | Behavior                                                                                  |
-| --------- | ----------------------- | ----------------------------------------------------------------------------------------- |
-| `acquire` | `Promise<PoolToken<T>>` | Queue in FIFO order, validate or create, then settle in the same order; accepts a signal. |
-| `clear`   | `Promise<void>`         | Claim and clean only the records idle in this call's synchronous snapshot.                |
-| `destroy` | `Promise<void>`         | Enter terminal state and return the exact stable promise for complete teardown.           |
+| Method    | Returns                 | Summary                                                                                                                   |
+| --------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `acquire` | `Promise<PoolToken<T>>` | Queues the caller in FIFO order, validates an idle record or creates one, and settles queued acquires in that same order. |
+| `clear`   | `Promise<void>`         | Destroys the records that are idle at this call's synchronous snapshot.                                                   |
+| `destroy` | `Promise<void>`         | Tears down the pool permanently and returns its stable completion barrier.                                                |
 
 #### `PoolToken`
 
-The lease returned by `acquire`, with the one operation that returns its record.
+The lease returned by `acquire`, with the operation that returns its record.
 
-| Method    | Returns | Behavior                                                                                                              |
-| --------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
-| `release` | `void`  | Returns this exact record to the pool once; a repeat call and a call after teardown transferred ownership are no-ops. |
+| Method    | Returns | Summary                                                                                                             |
+| --------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `release` | `void`  | Gives this exact record back to the pool once; a repeat call, and a call after teardown took ownership, are no-ops. |
 
 ## Contract
 
 ### Capacity and FIFO
 
-Every `acquire` receives its queue position before a create or validation hook starts. One
+Every `acquire` receives its queue position before a create or validation hook starts. The
 reentrancy-safe pump may assign several hook operations concurrently, but a head commit
 barrier settles successes and failures in request order. A later fast create or validation
 cannot overtake an earlier slow one. Capacity obeys:
@@ -142,7 +152,7 @@ becomes idle and emits `release`. Release after teardown ownership transferred i
 
 `clear()` synchronously snapshots idle records and installs one cleanup promise per record
 before invoking the hook. Concurrent clears therefore own disjoint snapshots, and a lease
-released after one snapshot is not part of it. Every claimed record stays in `size` until its
+released after a snapshot is taken is not part of it. Every claimed record stays in `size` until its
 hook attempt completes. Distinct failures are aggregated in a code-`cleanup` `PoolError`
 whose `context.failures` retains the original thrown values.
 Each claimed record's cleanup settlement independently wakes queued acquires after the
@@ -211,6 +221,8 @@ const pool = createPool({
 
 ### Validate public boundaries
 
+Check a candidate value or error against the public boundary guards before acting on it:
+
 ```ts
 import { PoolError, isPoolError, isPoolMax, isPoolSignal } from '@orkestrel/pool'
 
@@ -223,6 +235,8 @@ if (isPoolError(failure)) console.error(failure.code)
 ```
 
 ### Always release and explicitly tear down
+
+Release every acquired token and call `destroy()` explicitly after work finishes:
 
 ```ts
 import { Pool } from '@orkestrel/pool'
@@ -251,8 +265,13 @@ await pool.destroy()
   boundary guards alone: accepted and rejected maxima, and native versus hostile signals.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — factory
   construction and instance identity only.
-- [`tests/guides.test.ts`](../tests/guides.test.ts) — source/export,
-  method, example, import, and link parity.
+- [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ `src/core` bijection
+  over value and type exports, the `PoolInterface` ↔ `Pool` and `PoolToken` method bijections,
+  fence-import and relative-link resolution, and the equality gate: every `Summary` cell against
+  its declaration's description paragraph, the titled `Create a pool` fence against the
+  `@example` block of that title (pinned so the titled pair cannot be retired silently), and the
+  README pitch against this guide's tagline. It also runs the boundary-guard fence and asserts
+  the values its comments claim.
 
 ## See also
 
