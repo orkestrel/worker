@@ -1,5 +1,5 @@
 import type { Reply } from './types.js'
-import { attempt, isRecord } from '@orkestrel/contract'
+import { attempt, isRecord, isString } from '@orkestrel/contract'
 
 // === The wire protocol (main ↔ thread)
 //
@@ -28,7 +28,7 @@ export function isReply(value: unknown, id: string): value is Reply {
 		if (!isRecord(value)) return false
 		if (value.id !== id) return false
 		if (value.ok === true) return 'value' in value
-		return value.ok === false && typeof value.error === 'string'
+		return value.ok === false && isString(value.error)
 	})
 	return outcome.success && outcome.value
 }

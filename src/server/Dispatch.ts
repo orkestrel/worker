@@ -2,7 +2,7 @@ import type { QueueContext } from '@orkestrel/queue'
 import type { Guard } from '@orkestrel/contract'
 import type { NodeThread } from './types.js'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
-import { attempt, isRecord } from '@orkestrel/contract'
+import { attempt, isError, isRecord } from '@orkestrel/contract'
 import { isReply } from './helpers.js'
 import { Thread } from './Thread.js'
 
@@ -112,7 +112,7 @@ export class Dispatch<TResult> {
 				input: this.#input,
 			})
 		} catch (error: unknown) {
-			this.#fail(error instanceof Error ? error : new Error(String(error)))
+			this.#fail(isError(error) ? error : new Error(String(error)))
 		}
 	}
 
