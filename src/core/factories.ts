@@ -8,7 +8,8 @@ import { Worker } from './Worker.js'
  *
  * @remarks
  * Bounded concurrency, retries, and the per-attempt timeout and abort are the queue's.
- * Default for the pool's `max`: the `concurrency` value, so resources match the jobs in flight.
+ * When neither pool `max` nor `min` is given, `max` defaults to `concurrency`. With `min`,
+ * Pool owns the capacity defaults and validation, and the worker starts warming the floor.
  * Resources are reused across jobs. A handler that throws still releases its resource (the
  * acquire/release pair brackets the call in a `finally`), so a later job reuses it. The
  * lifecycle (`start` / `stop` / `pause` / `resume` / `abort` / `clear` / `destroy`)

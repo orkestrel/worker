@@ -10,6 +10,8 @@ import {
 	createRecorders,
 	createResourceFactory,
 	createTeardown,
+	waitForAbort,
+	waitForCondition,
 	waitForDelay,
 } from '@orkestrel/test'
 import { PoolOptionsProbe, TestQueueStore } from '../../setup.js'
@@ -150,6 +152,110 @@ describe('Worker — queue option validation', () => {
 		expect(failure.code).toBe('invalid')
 		expect(failure.context).toEqual({ option: 'concurrency', value: 0 })
 		expect(poolReads.count).toBe(0)
+	})
+})
+
+describe('Worker pool option forwarding', () => {
+	it('warms min before work and leaves max defaulting to the pool despite concurrency', async () => {
+		const { create, destroy, created, destroyed } = createResourceFactory()
+		const worker = track(
+			new Worker<number, number, number>({
+				concurrency: 1,
+				pool: { create, destroy, min: 2, restarts: 0 },
+				handler: (_input, resource) => resource,
+			}),
+		)
+		await waitForCondition('warm resource floor', () => created.count === 2, { budget: 200 })
+		expect(worker.active).toBe(0)
+		expect(worker.count).toBe(0)
+		expect(created.count).toBe(2)
+		await expect(worker.enqueue(0)).resolves.toBe(1)
+		expect(created.count).toBe(2)
+		await worker.destroy()
+		expect(destroyed.count).toBe(2)
+	})
+
+	it('forwards restarts to bound failed creates and preserves the pool failure cause', async () => {
+		const failure = new Error('resource creation failed')
+		const creates = createRecorder<[]>()
+		const worker = track(
+			new Worker<undefined, number, void>({
+				pool: {
+					min: 1,
+					restarts: 1,
+					create: () => {
+						creates.handler()
+						throw failure
+					},
+				},
+				handler: () => {},
+			}),
+		)
+		await waitForCondition('bounded floor attempts', () => creates.count === 2, { budget: 200 })
+		const work = await Promise.allSettled([worker.enqueue(undefined)])
+		const result = work[0]
+		if (result?.status !== 'rejected' || !isPoolError(result.reason)) {
+			throw new Error('expected pool create failure')
+		}
+		expect(result.reason.code).toBe('create')
+		expect(result.reason.cause).toBe(failure)
+		expect(creates.count).toBe(2)
+		await expect(worker.enqueue(undefined)).rejects.toMatchObject({
+			code: 'create',
+			cause: failure,
+		})
+		expect(creates.count).toBe(2)
+	})
+
+	it('forwards watch for each resource and aborts its signal before disposal', async () => {
+		const { create } = createResourceFactory()
+		const watched = createRecorder<[number, AbortSignal]>()
+		const disposed = createRecorder<[number, boolean | undefined]>()
+		const worker = track(
+			new Worker<number, number, number>({
+				concurrency: 2,
+				pool: {
+					create,
+					watch: (value, signal) => {
+						watched.handler(value, signal)
+						return waitForAbort(signal)
+					},
+					destroy: (value) => disposed.handler(value, watched.calls[value - 1]?.[1].aborted),
+				},
+				handler: (input) => input,
+			}),
+		)
+		await expect(Promise.all([worker.enqueue(1), worker.enqueue(2)])).resolves.toEqual([1, 2])
+		expect(watched.calls).toEqual([
+			[1, expect.any(AbortSignal)],
+			[2, expect.any(AbortSignal)],
+		])
+		expect(watched.calls.map(([, signal]) => signal.aborted)).toEqual([false, false])
+		await worker.destroy()
+		expect(disposed.calls).toEqual([
+			[1, true],
+			[2, true],
+		])
+	})
+
+	it('refuses conflicting min and max at construction with the pool diagnostic', async () => {
+		let worker: Worker<undefined, number, void> | undefined
+		let failure: unknown
+		try {
+			worker = new Worker({
+				pool: { create: () => 0, min: 2, max: 3, restarts: 0 },
+				handler: () => {},
+			})
+		} catch (error) {
+			failure = error
+		}
+		try {
+			if (!isPoolError(failure)) throw new Error('expected pool minimum validation')
+			expect(failure.code).toBe('invalid')
+			expect(failure.context).toEqual({ value: 2 })
+		} finally {
+			await worker?.destroy()
+		}
 	})
 })
 
@@ -374,8 +480,16 @@ describe('Worker constructor option boundaries', () => {
 		const laterEvents = createRecorder<[string]>()
 		const laterErrors = createRecorder<readonly [error: unknown, event: string]>()
 		const listenerFailure = new Error('pool listener failed')
+		const watched = createRecorder<[number, AbortSignal]>()
+		const laterWatched = createRecorder<[number]>()
 		const initial: Required<PoolOptions<number>> = {
 			max: 1,
+			min: 1,
+			restarts: 1,
+			watch: (value, signal) => {
+				watched.handler(value, signal)
+				return waitForAbort(signal)
+			},
 			on: {
 				create: () => {
 					events.handler('create')
@@ -398,6 +512,12 @@ describe('Worker constructor option boundaries', () => {
 		}
 		const later: Required<PoolOptions<number>> = {
 			max: 2,
+			min: 2,
+			restarts: 0,
+			watch: (value, signal) => {
+				laterWatched.handler(value)
+				return waitForAbort(signal)
+			},
 			on: { create: () => laterEvents.handler('create') },
 			error: laterErrors.handler,
 			create: () => {
@@ -421,12 +541,26 @@ describe('Worker constructor option boundaries', () => {
 		await expect(worker.enqueue(1)).resolves.toBe(8)
 		await expect(worker.enqueue(2)).resolves.toBe(9)
 		await expect(worker.destroy()).resolves.toBeUndefined()
-		expect(reads.calls).toEqual([['max'], ['on'], ['error'], ['create'], ['destroy'], ['validate']])
+		expect(reads.calls).toEqual([
+			['max'],
+			['min'],
+			['restarts'],
+			['watch'],
+			['on'],
+			['error'],
+			['create'],
+			['destroy'],
+			['validate'],
+		])
 		expect(created.count).toBe(1)
 		expect(destroyed.calls).toEqual([[7]])
-		expect(validated.calls).toEqual([[7]])
+		expect(validated.calls).toEqual([[7], [7]])
+		expect(watched.calls).toEqual([[7, expect.any(AbortSignal)]])
+		expect(watched.calls[0]?.[1].aborted).toBe(true)
+		expect(laterWatched.count).toBe(0)
 		expect(events.calls).toEqual([
 			['create'],
+			['release'],
 			['acquire'],
 			['release'],
 			['acquire'],

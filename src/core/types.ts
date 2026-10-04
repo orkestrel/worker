@@ -54,8 +54,10 @@ export type WorkerHandler<TInput, TResource, TResult> = (
  * @remarks
  * - `handler` — runs each job against an acquired pool resource; rejecting triggers a
  *   retry while attempts remain (delegated to the underlying queue).
- * - `pool` — the {@link PoolOptions} for the resource the handler runs against, sized so
- *   resources match the jobs in flight. Default for its `max`: the `concurrency` value.
+ * - `pool` — the {@link PoolOptions} forwarded to the owned pool for validation. When both
+ *   `max` and `min` are absent, `max` defaults to `concurrency`. With `min`, the pool defaults
+ *   `max` to `min`, requires equality and `restarts`, and starts warming at construction.
+ *   The floor can exceed queue concurrency; `watch` observes each resource's loss.
  * - `concurrency` — the maximum jobs in flight at once; it must be a positive safe
  *   integer, as validated by the underlying queue. Default: 1.
  * - `retries` — the default extra attempts per job on failure. Default: 0.

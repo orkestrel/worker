@@ -164,10 +164,14 @@ These invariants hold across `src/core` ↔ `worker.md`:
    `null` reaches Queue or Pool validation. Queue's integer timeout contract is preserved:
    `timeout` must be in `0..2_147_483_647` milliseconds, and `0` disables the deadline.
    Queue is constructed successfully before the
-   pool option is read, and every declared pool member (`max`, `on`, `error`, `create`,
-   `destroy`, `validate`) is then captured once by direct access, preserving inherited and
-   non-enumerable structural options. Pool `max` still defaults to concurrency, so resources
-   match the jobs in flight by default. `stop` / `abort` / `clear` return the
+   pool option is read, and every declared pool member (`max`, `min`, `restarts`, `watch`,
+   `on`, `error`, `create`, `destroy`, `validate`) is then captured once by direct access,
+   preserving inherited and non-enumerable structural options. Pool validates the forwarded
+   members. Pool `max` defaults to concurrency only when both `max` and `min` are absent.
+   With `min`, Pool defaults `max` to `min` and refuses unequal explicit values or a missing
+   `restarts` bound. The worker starts the pool at construction, so a floor warms before
+   work arrives and can exceed queue concurrency. A spent floor's startup rejection is
+   observed internally; acquire reports the pool failure to jobs. `stop` / `abort` / `clear` return the
    queue's exact cleanup barriers. `destroy` installs one stable barrier before it invokes
    queue teardown (including synchronous abort-event reentry), awaits queue then pool
    settlement serially, aggregates the queue's failure and the pool's in that order, and
@@ -383,6 +387,29 @@ See [queue.md](queue.md) / [pool.md](pool.md) for the underlying
 listener's throw never prevents a sibling listener, and the throw reaches the emitter's
 `error` handler, so a buggy worker observer leaves the inner queue and pool intact.
 
+## Pool options
+
+`WorkerOptions.pool` forwards the resource options to Pool, which owns their validation:
+
+| Member     | Behavior                                                                                             |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| `create`   | Creates a resource on demand or while filling a configured floor.                                    |
+| `destroy`  | Disposes each resource during pool cleanup or loss.                                                  |
+| `validate` | Checks an idle resource before reuse.                                                                |
+| `max`      | Caps pool capacity; defaults to `concurrency` only when `min` is absent.                             |
+| `min`      | Sets a positive safe integer warm floor; Pool defaults `max` to it and requires equality.            |
+| `restarts` | Sets the required non-negative safe integer refill bound with `min`; invalid without `min`.          |
+| `watch`    | Observes each created resource; settlement declares loss while live, and disposal aborts its signal. |
+| `on`       | Installs initial pool lifecycle listeners.                                                           |
+| `error`    | Receives pool listener failures and live watch rejections or throws.                                 |
+
+Pool `start()` fills the floor when the worker is constructed. Without `min`, resources remain
+lazy. A `restarts: 1` bound permits another create after the first failure and spends the
+floor after the second failure. Jobs then receive Pool's `create` error with the last cause.
+Worker `start()` restarts queue loops only; it does not reset a spent pool's restart bound.
+See [Pool](pool.md), under “Warm floor and loss”, for refill, retained
+cleanup failures, and watch listener cleanup.
+
 ## Patterns
 
 ### A resource-backed worker
@@ -479,8 +506,9 @@ Follow these practices when you run a worker in production:
 - **Honour `context.signal`** — pass it through to the resource's operation and bail
   out when it fires, so timeouts and aborts actually stop work rather than abandoning
   its result.
-- **Size the pool through `concurrency`** — the pool's `max` defaults to it; override
-  `pool.max` explicitly only when the resource cap must diverge from the job cap.
+- **Size the pool through `concurrency`** — when neither `pool.max` nor `pool.min` is given,
+  the pool's `max` defaults to it. Set `pool.max` for a separate lazy resource cap, or
+  `pool.min` with `pool.restarts` for a warm floor independent of queue concurrency.
   Concurrency must be a positive safe integer; invalid values are rejected by Queue and
   are never normalized.
 - **`abort` is terminal** — a worker-level abort cancels in-flight work and stops the
@@ -524,6 +552,9 @@ These tests pin the behaviour this guide documents:
   returns the queue's cleanup barriers; constructor options and every declared pool option are
   captured once (including inherited / non-enumerable structural options), only explicit
   `undefined` defaults, runtime `null` reaches the Queue/Pool diagnostic,
+  `min` warms before work with Pool's `max` default, `restarts` bounds failed creates,
+  `watch` receives each resource and an abort signal before disposal, conflicting `min`
+  and `max` values refuse at construction with Pool's error,
   and invalid Queue concurrency wins before the pool option is read; strict concurrency
   rejects zero, negative, fractional, `NaN`, and infinite values instead of normalizing
   them; `destroy` keeps one

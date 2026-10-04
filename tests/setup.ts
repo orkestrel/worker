@@ -73,6 +73,21 @@ export class PoolOptionsProbe<T> implements PoolOptions<T> {
 		return this.#values.max
 	}
 
+	get min(): Required<PoolOptions<T>>['min'] {
+		this.#reads.handler('min')
+		return this.#values.min
+	}
+
+	get restarts(): Required<PoolOptions<T>>['restarts'] {
+		this.#reads.handler('restarts')
+		return this.#values.restarts
+	}
+
+	get watch(): Required<PoolOptions<T>>['watch'] {
+		this.#reads.handler('watch')
+		return this.#values.watch
+	}
+
 	get on(): Required<PoolOptions<T>>['on'] {
 		this.#reads.handler('on')
 		return this.#values.on

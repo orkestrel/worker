@@ -1,6 +1,6 @@
 import type { PoolOptions } from '@orkestrel/pool'
 import { describe, expect, it } from 'vitest'
-import { createRecorder } from '@orkestrel/test'
+import { createRecorder, waitForAbort } from '@orkestrel/test'
 import { PoolOptionsProbe, TestQueueStore } from './setup.js'
 
 // tests/setup.ts — the environment-agnostic base setup. Proves the two exports the
@@ -59,17 +59,40 @@ describe('PoolOptionsProbe', () => {
 		const on = {}
 		const error = (): void => undefined
 		const probe = new PoolOptionsProbe<number>(
-			{ max: 3, on, error, create, destroy, validate },
+			{
+				max: 3,
+				min: 3,
+				restarts: 2,
+				watch: (_value, signal) => waitForAbort(signal),
+				on,
+				error,
+				create,
+				destroy,
+				validate,
+			},
 			reads,
 		)
 
 		expect(probe.max).toBe(3)
+		expect(probe.min).toBe(3)
+		expect(probe.restarts).toBe(2)
+		expect(probe.watch).toBeTypeOf('function')
 		expect(probe.on).toBe(on)
 		expect(probe.error).toBe(error)
 		expect(probe.create).toBe(create)
 		expect(probe.destroy).toBe(destroy)
 		expect(probe.validate).toBe(validate)
-		expect(reads.calls).toEqual([['max'], ['on'], ['error'], ['create'], ['destroy'], ['validate']])
+		expect(reads.calls).toEqual([
+			['max'],
+			['min'],
+			['restarts'],
+			['watch'],
+			['on'],
+			['error'],
+			['create'],
+			['destroy'],
+			['validate'],
+		])
 	})
 
 	it('replace swaps the values every subsequent getter read returns', () => {
@@ -77,6 +100,9 @@ describe('PoolOptionsProbe', () => {
 		const probe = new PoolOptionsProbe<number>(
 			{
 				max: 1,
+				min: 1,
+				restarts: 0,
+				watch: (_value, signal) => waitForAbort(signal),
 				on: {},
 				error: (): void => undefined,
 				create: (): number => 0,
@@ -87,6 +113,9 @@ describe('PoolOptionsProbe', () => {
 		)
 		probe.replace({
 			max: 9,
+			min: 9,
+			restarts: 4,
+			watch: (_value, signal) => waitForAbort(signal),
 			on: {},
 			error: (): void => undefined,
 			create: (): number => 0,
@@ -95,6 +124,8 @@ describe('PoolOptionsProbe', () => {
 		})
 
 		expect(probe.max).toBe(9)
+		expect(probe.min).toBe(9)
+		expect(probe.restarts).toBe(4)
 		expect(probe.validate(0)).toBe(false)
 	})
 })
