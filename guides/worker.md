@@ -389,7 +389,8 @@ listener's throw never prevents a sibling listener, and the throw reaches the em
 
 ## Pool options
 
-`WorkerOptions.pool` forwards the resource options to Pool, which owns their validation:
+The `pool` option takes Pool's resource options and refuses the `capacity` option, so each
+resource serves one job at a time. Pool owns validation of the forwarded options:
 
 | Member     | Behavior                                                                                             |
 | ---------- | ---------------------------------------------------------------------------------------------------- |
@@ -406,6 +407,9 @@ listener's throw never prevents a sibling listener, and the throw reaches the em
 Pool `start()` fills the floor when the worker is constructed. Without `min`, resources remain
 lazy. A `restarts: 1` bound permits another create after the first failure and spends the
 floor after the second failure. Jobs then receive Pool's `create` error with the last cause.
+A resource lost while idle adds a strike even if it served a job before its last release.
+With `min: 1` and `restarts: 0`, that loss spends the floor, and the next job rejects with
+Pool's `create` error without creating a replacement.
 Worker `start()` restarts queue loops only; it does not reset a spent pool's restart bound.
 See [Pool](pool.md), under “Warm floor and loss”, for refill, retained
 cleanup failures, and watch listener cleanup.
@@ -552,7 +556,8 @@ These tests pin the behaviour this guide documents:
   returns the queue's cleanup barriers; constructor options and every declared pool option are
   captured once (including inherited / non-enumerable structural options), only explicit
   `undefined` defaults, runtime `null` reaches the Queue/Pool diagnostic,
-  `min` warms before work with Pool's `max` default, `restarts` bounds failed creates,
+  the pool option type excludes `capacity`, `min` warms before work with Pool's `max` default,
+  `restarts` bounds failed creates and loss of a previously used idle resource,
   `watch` receives each resource and an abort signal before disposal, conflicting `min`
   and `max` values refuse at construction with Pool's error,
   and invalid Queue concurrency wins before the pool option is read; strict concurrency

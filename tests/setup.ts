@@ -1,6 +1,6 @@
-import type { PoolOptions } from '@orkestrel/pool'
 import type { QueueStoreInterface, StoredEntry } from '@orkestrel/queue'
 import type { RecorderInterface } from '@orkestrel/test'
+import type { WorkerOptions } from '@src/core'
 
 // ── Environment-agnostic base setup ───────────────────────────────────────────
 //
@@ -55,65 +55,68 @@ export class TestQueueStore<TInput> implements QueueStoreInterface<TInput> {
 	}
 }
 
+/** Represents the pool options accepted by a worker fixture. */
+export type WorkerPoolOptions<T> = Omit<WorkerOptions<unknown, T, unknown>['pool'], 'capacity'>
+
 /** Records each prototype property read against getter-backed pool options. */
-export class PoolOptionsProbe<T> implements PoolOptions<T> {
-	#values: Required<PoolOptions<T>>
-	readonly #reads: RecorderInterface<readonly [property: keyof PoolOptions<T>]>
+export class PoolOptionsProbe<T> implements WorkerPoolOptions<T> {
+	#values: Required<WorkerPoolOptions<T>>
+	readonly #reads: RecorderInterface<readonly [property: keyof WorkerPoolOptions<T>]>
 
 	constructor(
-		values: Required<PoolOptions<T>>,
-		reads: RecorderInterface<readonly [property: keyof PoolOptions<T>]>,
+		values: Required<WorkerPoolOptions<T>>,
+		reads: RecorderInterface<readonly [property: keyof WorkerPoolOptions<T>]>,
 	) {
 		this.#values = values
 		this.#reads = reads
 	}
 
-	get max(): Required<PoolOptions<T>>['max'] {
+	get max(): Required<WorkerPoolOptions<T>>['max'] {
 		this.#reads.handler('max')
 		return this.#values.max
 	}
 
-	get min(): Required<PoolOptions<T>>['min'] {
+	get min(): Required<WorkerPoolOptions<T>>['min'] {
 		this.#reads.handler('min')
 		return this.#values.min
 	}
 
-	get restarts(): Required<PoolOptions<T>>['restarts'] {
+	get restarts(): Required<WorkerPoolOptions<T>>['restarts'] {
 		this.#reads.handler('restarts')
 		return this.#values.restarts
 	}
 
-	get watch(): Required<PoolOptions<T>>['watch'] {
+	get watch(): Required<WorkerPoolOptions<T>>['watch'] {
 		this.#reads.handler('watch')
 		return this.#values.watch
 	}
 
-	get on(): Required<PoolOptions<T>>['on'] {
+	get on(): Required<WorkerPoolOptions<T>>['on'] {
 		this.#reads.handler('on')
 		return this.#values.on
 	}
 
-	get error(): Required<PoolOptions<T>>['error'] {
+	get error(): Required<WorkerPoolOptions<T>>['error'] {
 		this.#reads.handler('error')
 		return this.#values.error
 	}
 
-	get create(): Required<PoolOptions<T>>['create'] {
+	get create(): Required<WorkerPoolOptions<T>>['create'] {
 		this.#reads.handler('create')
 		return this.#values.create
 	}
 
-	get destroy(): Required<PoolOptions<T>>['destroy'] {
+	get destroy(): Required<WorkerPoolOptions<T>>['destroy'] {
 		this.#reads.handler('destroy')
 		return this.#values.destroy
 	}
 
-	get validate(): Required<PoolOptions<T>>['validate'] {
+	get validate(): Required<WorkerPoolOptions<T>>['validate'] {
 		this.#reads.handler('validate')
 		return this.#values.validate
 	}
 
-	replace(values: Required<PoolOptions<T>>): void {
+	replace(values: Required<WorkerPoolOptions<T>>): void {
 		this.#values = values
 	}
 }

@@ -1,4 +1,4 @@
-import type { PoolOptions } from '@orkestrel/pool'
+import type { WorkerPoolOptions } from './setup.js'
 import { describe, expect, it } from 'vitest'
 import { createRecorder, waitForAbort } from '@orkestrel/test'
 import { PoolOptionsProbe, TestQueueStore } from './setup.js'
@@ -52,7 +52,7 @@ describe('TestQueueStore', () => {
 
 describe('PoolOptionsProbe', () => {
 	it('records each getter access once, in property order, and returns the configured value', () => {
-		const reads = createRecorder<readonly [property: keyof PoolOptions<number>]>()
+		const reads = createRecorder<readonly [property: keyof WorkerPoolOptions<number>]>()
 		const create = (): number => 7
 		const destroy = (): void => undefined
 		const validate = (): boolean => true
@@ -96,7 +96,7 @@ describe('PoolOptionsProbe', () => {
 	})
 
 	it('replace swaps the values every subsequent getter read returns', () => {
-		const reads = createRecorder<readonly [property: keyof PoolOptions<number>]>()
+		const reads = createRecorder<readonly [property: keyof WorkerPoolOptions<number>]>()
 		const probe = new PoolOptionsProbe<number>(
 			{
 				max: 1,

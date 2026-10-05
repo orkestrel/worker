@@ -1,6 +1,7 @@
 import type { PoolOptions } from '@orkestrel/pool'
-import type { WorkerEventMap } from '@src/core'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { WorkerEventMap, WorkerOptions } from '@src/core'
+import type { WorkerPoolOptions } from '../../setup.js'
+import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { stringShape } from '@orkestrel/contract'
 import { isPoolError } from '@orkestrel/pool'
 import { createMemoryQueueStore, isQueueError } from '@orkestrel/queue'
@@ -136,7 +137,7 @@ describe('Worker — queue option validation', () => {
 		const options = {
 			concurrency: 0,
 			handler: () => {},
-			get pool(): PoolOptions<number> {
+			get pool(): WorkerPoolOptions<number> {
 				poolReads.handler()
 				throw hostile
 			},
@@ -156,6 +157,12 @@ describe('Worker — queue option validation', () => {
 })
 
 describe('Worker pool option forwarding', () => {
+	it('excludes per-resource capacity from the pool option type', () => {
+		expectTypeOf<PoolOptions<number>>().not.toExtend<
+			WorkerOptions<number, number, number>['pool']
+		>()
+	})
+
 	it('warms min before work and leaves max defaulting to the pool despite concurrency', async () => {
 		const { create, destroy, created, destroyed } = createResourceFactory()
 		const worker = track(
@@ -236,6 +243,35 @@ describe('Worker pool option forwarding', () => {
 			[1, true],
 			[2, true],
 		])
+	})
+
+	it('spends the restart budget when a previously used resource is lost while idle', async () => {
+		const { create, destroy, created, destroyed } = createResourceFactory()
+		const loss = new AbortController()
+		const events = createRecorder<[string]>()
+		const worker = track(
+			new Worker<undefined, number, number>({
+				pool: {
+					create,
+					destroy,
+					min: 1,
+					restarts: 0,
+					watch: (value, signal) =>
+						waitForAbort(value === 1 ? AbortSignal.any([loss.signal, signal]) : signal),
+					on: {
+						acquire: () => events.handler('acquire'),
+						release: () => events.handler('release'),
+					},
+				},
+				handler: (_input, resource) => resource,
+			}),
+		)
+		await expect(worker.enqueue(undefined)).resolves.toBe(1)
+		expect(events.calls.slice(-2)).toEqual([['acquire'], ['release']])
+		loss.abort()
+		await waitForCondition('idle resource disposal', () => destroyed.count === 1, { budget: 200 })
+		await expect(worker.enqueue(undefined)).rejects.toMatchObject({ code: 'create' })
+		expect(created.count).toBe(1)
 	})
 
 	it('refuses conflicting min and max at construction with the pool diagnostic', async () => {
@@ -468,7 +504,7 @@ describe('Worker constructor option boundaries', () => {
 	})
 
 	it('snapshots every prototype-backed pool option once and preserves its behavior', async () => {
-		const reads = createRecorder<readonly [property: keyof PoolOptions<number>]>()
+		const reads = createRecorder<readonly [property: keyof WorkerPoolOptions<number>]>()
 		const created = createRecorder<[]>()
 		const destroyed = createRecorder<[number]>()
 		const validated = createRecorder<[number]>()
@@ -482,7 +518,7 @@ describe('Worker constructor option boundaries', () => {
 		const listenerFailure = new Error('pool listener failed')
 		const watched = createRecorder<[number, AbortSignal]>()
 		const laterWatched = createRecorder<[number]>()
-		const initial: Required<PoolOptions<number>> = {
+		const initial: Required<WorkerPoolOptions<number>> = {
 			max: 1,
 			min: 1,
 			restarts: 1,
@@ -510,7 +546,7 @@ describe('Worker constructor option boundaries', () => {
 				return true
 			},
 		}
-		const later: Required<PoolOptions<number>> = {
+		const later: Required<WorkerPoolOptions<number>> = {
 			max: 2,
 			min: 2,
 			restarts: 0,

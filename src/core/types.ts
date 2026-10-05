@@ -54,7 +54,8 @@ export type WorkerHandler<TInput, TResource, TResult> = (
  * @remarks
  * - `handler` — runs each job against an acquired pool resource; rejecting triggers a
  *   retry while attempts remain (delegated to the underlying queue).
- * - `pool` — the {@link PoolOptions} forwarded to the owned pool for validation. When both
+ * - `pool` — the resource options from {@link PoolOptions}, refusing values that can carry
+ *   `capacity`, forwarded to the owned pool for validation. When both
  *   `max` and `min` are absent, `max` defaults to `concurrency`. With `min`, the pool defaults
  *   `max` to `min`, requires equality and `restarts`, and starts warming at construction.
  *   The floor can exceed queue concurrency; `watch` observes each resource's loss.
@@ -74,7 +75,7 @@ export interface WorkerOptions<TInput, TResource, TResult> {
 	/** Holds the emitter's listener-error handler; a listener throw routes here, not to a domain event. */
 	readonly error?: EmitterErrorHandler
 	readonly handler: WorkerHandler<TInput, TResource, TResult>
-	readonly pool: PoolOptions<TResource>
+	readonly pool: Omit<PoolOptions<TResource>, 'capacity'> & { readonly capacity?: never }
 	readonly concurrency?: number
 	readonly retries?: number
 	/** Holds integer milliseconds in `0..2_147_483_647`; `0` disables the per-attempt deadline. */
