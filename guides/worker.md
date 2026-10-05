@@ -199,7 +199,7 @@ These invariants hold across `src/core` ↔ `worker.md`:
    `TResult` infer from the `input` and `result` guards, so a call site needs no type
    argument. The structured-clone boundary is crossed with no `as`: a `Dispatch` narrows each reply
    value through `options.result` (a value that fails it rejects with `'reply did not
-satisfy result guard'`), and the worker side narrows each payload through
+   satisfy result guard'`), and the worker side narrows each payload through
    `options.input` (a bad input replies `'input did not satisfy input guard'`) —
    `TInput` / `TResult` are reconstructed by validation, never asserted. A throwing
    caller guard is contained and rejects only that job; the pooled worker remains usable.

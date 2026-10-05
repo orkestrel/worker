@@ -1,11 +1,11 @@
 # Pool
 
 > A typed resource pool with optional bounded capacity, a warm floor, bounded loss recovery,
-> unique ownership, FIFO settlement, validated reuse, caller-owned cancellation, and explicit cleanup.
+> exclusive leases by default, FIFO settlement, validated idle reuse, caller-owned cancellation, and explicit cleanup.
 
 The pool supports lazy creation or a warm floor, with no eviction timer, acquire timeout,
 or polling loop. Waits park on promises or signal listeners. An acquire rejects with
-`cleanup` when a floor retains a record, owns `min` records, has nothing idle, and has no
+`cleanup` when a floor retains a record, owns `min` records, has nothing eligible, and has no
 refill or disposal pending, even with live leases. The lifecycle hooks are the caller's,
 so the engine itself performs no I/O.
 
@@ -39,9 +39,9 @@ try {
 
 ### Factories
 
-| API          | Kind     | Summary                                                                                                                                  |
-| ------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `createPool` | function | Creates a distinct `PoolInterface` from resource lifecycle hooks, with optional bounded capacity, unique ownership, and FIFO settlement. |
+| API          | Kind     | Summary                                                                                                                                             |
+| ------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createPool` | function | Creates a distinct `PoolInterface` from resource lifecycle hooks, with optional bounded capacity, exclusive leases by default, and FIFO settlement. |
 
 ### Classes
 
@@ -57,27 +57,29 @@ In a guard table a `Shape` cell holds the type the guard narrows to.
 | API            | Kind     | Shape         | Summary                                                                                                          |
 | -------------- | -------- | ------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `isPoolError`  | function | `PoolError`   | Tests whether an unknown value is a `PoolError`, returning `false` for hostile proxies.                          |
-| `isPoolMax`    | function | `number`      | Tests whether a value is a positive safe integer, the only valid explicit pool maximum.                          |
+| `isPoolLimit`  | function | `number`      | Tests whether a value is a positive safe integer for a pool record or lease limit.                               |
 | `isPoolSignal` | function | `AbortSignal` | Tests whether a value is a native `AbortSignal` for the acquire boundary, returning `false` for hostile proxies. |
 
 ### Types
 
 A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
 
-| API                | Kind      | Shape                                                                         | Summary                                                                                                                                                                            |
-| ------------------ | --------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PoolCode`         | type      | `'invalid' \| 'destroyed' \| 'create' \| 'cleanup'`                           | Names the machine-readable failure codes produced by `PoolError`.                                                                                                                  |
-| `PoolContext`      | interface | `{ value?, failures? }`                                                       | Represents the structured context attached to a `PoolError`: the rejected input, or the distinct destroy-hook failures an aggregate cleanup collected.                             |
-| `PoolErrorOptions` | interface | `{ code, cause?, context? }`                                                  | Represents the construction options for `PoolError`: the stable code, an optional cause, and optional structured context.                                                          |
-| `PoolEventMap`     | type      | `{ create, acquire, release, destroy }`                                       | Represents the observable resource lifecycle events emitted by a `PoolInterface`.                                                                                                  |
-| `PoolToken`        | interface | `{ value } plus release, destroy`                                             | Represents a unique lease over one pool-owned resource record, exposing that record as a readonly `value` and ending it through an idempotent `release` or `destroy`.              |
-| `PoolOptions`      | interface | `{ on?, error?, create, destroy?, validate?, watch?, max?, min?, restarts? }` | Represents the resource lifecycle options for `Pool` and `createPool`: creation, destruction, validation, capacity, a bounded warm floor, and loss observation.                    |
-| `PoolInterface`    | interface | `{ emitter, size, idle, active } plus start, acquire, clear, destroy`         | Represents a FIFO resource pool with optional bounded capacity, a warm floor, loss recovery, and deterministic teardown, exposing its record counts and a typed lifecycle emitter. |
+| API                | Kind      | Shape                                                                                    | Summary                                                                                                                                                                            |
+| ------------------ | --------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PoolCode`         | type      | `'invalid' \| 'destroyed' \| 'create' \| 'cleanup'`                                      | Names the machine-readable failure codes produced by `PoolError`.                                                                                                                  |
+| `PoolContext`      | interface | `{ value?, failures? }`                                                                  | Represents the structured context attached to a `PoolError`: the rejected input, or the distinct destroy-hook failures an aggregate cleanup collected.                             |
+| `PoolErrorOptions` | interface | `{ code, cause?, context? }`                                                             | Represents the construction options for `PoolError`: the stable code, an optional cause, and optional structured context.                                                          |
+| `PoolEventMap`     | type      | `{ create, acquire, release, destroy }`                                                  | Represents the observable resource lifecycle events emitted by a `PoolInterface`.                                                                                                  |
+| `PoolToken`        | interface | `{ value } plus release, destroy`                                                        | Represents a unique lease over one pool-owned resource record, exposing that record as a readonly `value` and ending it through an idempotent `release` or `destroy`.              |
+| `PoolOptions`      | interface | `{ on?, error?, create, destroy?, validate?, watch?, capacity?, max?, min?, restarts? }` | Represents the resource lifecycle options for `Pool` and `createPool`: creation, destruction, validation, capacity, a bounded warm floor, and loss observation.                    |
+| `PoolInterface`    | interface | `{ emitter, size, idle, active } plus start, acquire, clear, destroy`                    | Represents a FIFO resource pool with optional bounded capacity, a warm floor, loss recovery, and deterministic teardown, exposing its record counts and a typed lifecycle emitter. |
 
 `size` counts every owned record, including records being validated, destroyed, or retained
-after failed cleanup under `min`. `idle` counts only immediately available records.
-`active` counts only leased records. An in-flight create reservation claims capacity but is
-not yet an owned record and therefore is not part of `size`.
+after failed cleanup under `min`. `idle` counts available records with no live lease or pending
+handout. `active` counts records with live leases, counting a shared record once. A partially
+occupied record is active and can accept another lease; it is not idle. A pending handout counts
+against `capacity` but becomes active only at its FIFO grant. An in-flight create reservation
+claims record capacity but is not yet an owned record and therefore is not part of `size`.
 
 ## Methods
 
@@ -86,21 +88,21 @@ The public call-signature members of `PoolInterface` and `PoolToken`; `Pool` imp
 
 #### `PoolInterface`
 
-| Method    | Returns                 | Summary                                                                                                                            |
-| --------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `start`   | `Promise<void>`         | Fills the warm floor and resets the strikes of a spent floor; without a floor, resolves immediately.                               |
-| `acquire` | `Promise<PoolToken<T>>` | Queues the caller in FIFO order, validates an idle record or waits for a floor refill, and creates on demand only without a floor. |
-| `clear`   | `Promise<void>`         | Destroys the records that are idle at this call's synchronous snapshot and restores a started floor.                               |
-| `destroy` | `Promise<void>`         | Tears down the pool permanently and returns its stable completion barrier.                                                         |
+| Method    | Returns                 | Summary                                                                                                                                                    |
+| --------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`   | `Promise<void>`         | Fills the warm floor and resets the strikes of a spent floor; without a floor, resolves immediately.                                                       |
+| `acquire` | `Promise<PoolToken<T>>` | Queues the caller in FIFO order, shares an occupied record or validates an idle record, and waits for a floor refill or creates on demand without a floor. |
+| `clear`   | `Promise<void>`         | Destroys the records that are idle at this call's synchronous snapshot and restores a started floor.                                                       |
+| `destroy` | `Promise<void>`         | Tears down the pool permanently and returns its stable completion barrier.                                                                                 |
 
 #### `PoolToken`
 
 The lease returned by `acquire`, with operations that return or dispose its exact record.
 
-| Method    | Returns         | Summary                                                                                                                     |
-| --------- | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `release` | `void`          | Gives this exact record back to the pool once; a repeat call, and a call after loss or teardown took ownership, are no-ops. |
-| `destroy` | `Promise<void>` | Destroys this exact record instead of returning it; a repeat call, and a call after release, are no-ops.                    |
+| Method    | Returns         | Summary                                                                                                                                          |
+| --------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `release` | `void`          | Ends this exact lease once; a repeat call, and a call after loss or teardown took ownership, are no-ops. Other leases on the record remain live. |
+| `destroy` | `Promise<void>` | Destroys this exact record for every co-holder and invalidates their leases; a repeat call, and a call after release, are no-ops.                |
 
 ## Contract
 
@@ -133,12 +135,16 @@ holder still holds the token. The holder learns of that loss from its own `watch
 hook. After disposal, the token's `release()` and `destroy()` calls do nothing. During disposal,
 the first `destroy()` call waits for that cleanup attempt and rejects with `cleanup` if it fails.
 
-A failed refill adds a strike. Losing a record that has never been leased also adds a strike,
-including failed validation. Granting a lease resets the strikes; successful creation does not.
+A failed refill adds a strike. Losing a record with no live lease also adds a strike,
+including a previously used record and failed idle validation. Granting a lease resets the
+strikes only when the granted record was created after the last strike; successful creation
+alone does not. Granting an older healthy
+record leaves the strikes unchanged. Any idle record that dies, refills, and dies
+again without a grant between those losses can spend the floor.
 When strikes exceed `restarts`, the floor is spent. With `restarts: 1`, the first failed
 create permits another attempt, and the second refuses the next attempt. `start()` rejects
 with `create` and the last cause; another `start()` resets the strikes. While the floor is
-spent, an acquire without an idle record rejects with `create` after pending refills and
+spent, an acquire without an eligible record rejects with `create` after pending refills and
 disposal settle. If the floor retains a record and owns `min` records, that acquire rejects
 with `cleanup` instead, even with live leases. A spent floor and a rejected `start()` still
 serve their live records. A loss without a thrown cause leaves that cause undefined.
@@ -146,18 +152,24 @@ serve their live records. A loss without a thrown cause leaves that cause undefi
 A record lost while leased earns one refill attempt even after the bound is spent.
 The credit becomes spendable only when successful disposal removes the record; failed disposal
 grants no credit. That attempt remains owed during a concurrent refill and never resets the strikes.
-Its failed create adds a strike; its success alone does not reset the strikes. A record that was leased
-and later released adds no strike when lost. `token.destroy()` disposes the exact leased
-record, waits for an existing cleanup attempt, and rejects with `cleanup` if disposal fails.
+Its failed create adds a strike; its success alone does not reset the strikes. Granting that
+replacement resets the strikes only if no strike occurred after its creation. A record that was leased
+and later lost after its last release adds a strike. Under sharing, loss or one lease's
+`destroy()` ends the record for every co-holder, invalidates their leases, and owes one refill
+regardless of the lease count. `token.destroy()` waits for an existing cleanup attempt and
+rejects with `cleanup` if disposal fails.
 A token ends once: after `release()` or `destroy()`, the other call does nothing. Repeating
 either call does nothing. A repeat `token.destroy()` after a `cleanup` rejection resolves
-while the record stays retained.
+while the record stays retained. Refills hold no lease before a caller's grant, so repeated idle
+losses spend the budget. A consumer that keeps a lease without a holder, or repeatedly acquires
+refilled records that fail during use, can keep earning refills and qualifying grant resets.
+The pool cannot distinguish such a lease from useful work; callers must acquire only for a holder.
 
 Under `min`, a failed destroy hook leaves its record counted against `max` and excluded from
 idle and active counts. The pool never replaces that retained record or retries its destroy
 hook. The pool can run short; `start()` rejects with `cleanup` if retained records prevent
 filling. An acquire rejects with `cleanup` when the floor retains a record, owns `min` records,
-has nothing idle, and has no refill or disposal pending, even with live leases. The cause is
+has nothing eligible, and has no refill or disposal pending, even with live leases. The cause is
 the retained record's own cleanup failure. The terminal `destroy()` barrier
 reports the original cleanup failures. Without `min`, cleanup retains its lazy behavior and
 frees capacity after either hook outcome.
@@ -185,6 +197,12 @@ await pool.destroy()
 
 ### Capacity and FIFO
 
+`capacity` is a positive safe integer limiting simultaneous leases on each record; it defaults
+to 1. `min` and `max` still bound records. Acquisition chooses the eligible record with the
+fewest live leases and reserved handouts. Idle ties follow release order; occupied ties follow
+record creation order. A validating record is unavailable until validation settles.
+Reservations count before any awaited hook.
+
 Every `acquire` receives its queue position before a create or validation hook starts. The
 reentrancy-safe pump may assign several hook operations concurrently, but a head commit
 barrier settles successes and failures in request order. A later fast create or validation
@@ -192,14 +210,16 @@ cannot overtake an earlier slow one. Capacity obeys:
 
 ```text
 owned records + create reservations <= max
+live leases + reserved handouts per record <= capacity
 ```
 
-`max` must be a positive safe integer. Omit both capacity options for an unbounded pool.
+`max` must be a positive safe integer. Omit `min` and `max` for an unbounded record count.
 `Infinity`, fractions, zero, negative values, and unsafe integers are invalid.
-Construction snapshots `max` once and validates it before retention, then snapshots `on`
-and `error` once each.
+Construction snapshots `max` and `capacity` once and validates them before retention, then
+snapshots `on` and `error` once each.
 
-Record phases are disjoint:
+Record ownership follows these transitions; an occupied record can carry several leases and
+reserved handouts, and returns to available after its last lease and reservation end:
 
 ```text
 create reservation -> ready -> leased -> available -> validating -> ready
@@ -207,6 +227,14 @@ create reservation -> ready -> leased -> available -> validating -> ready
                                                      \-> retained (failed cleanup with min)
 floor refill --------------------------> available
 ```
+
+Validation runs only when reserving an idle record; handouts on an occupied record skip it.
+No caller receives a lease while idle validation is pending. This keeps a failed validation
+from silently disposing a record used by co-holders. After the last lease ends, the next idle
+reuse validates again. A freshly created lazy record keeps its direct handout behavior.
+With `capacity` greater than 1, an occupied record is never revalidated. Only `watch` detects
+its loss: without `watch`, a dead record can keep receiving leases until it becomes idle;
+with `watch`, that exposure lasts until the watch settles.
 
 Invalid validation, whether `false` or a thrown value, claims and cleans the record before a
 replacement capacity slot becomes available. Cleanup failure rejects that acquire with
@@ -230,10 +258,11 @@ eventual `destroy()` barrier.
 
 ### Release and cleanup
 
-A token captures its exact opaque record, so `release()` is correct even when multiple
-records contain the same value. Release is idempotent and removes the lease synchronously.
-With a waiter, the record is validated before handoff. Without an assignable waiter, it
-becomes idle and emits `release`. Release after loss or teardown took ownership does nothing.
+A token captures its exact lease and opaque record, so `release()` is correct even when multiple
+records contain the same value or several tokens share a record. Release is idempotent and
+removes only that lease synchronously. A remaining co-holder keeps the record active, and a
+waiter can share the freed place without validation. After the last release, idle reuse validates.
+A record that remains idle emits `release`. Release after loss or teardown took ownership does nothing.
 The pool disposes a lost lease while its holder still holds the token; the holder learns of
 the loss through its own `watch` or `destroy` hook. After disposal, both token methods do nothing.
 
@@ -314,10 +343,10 @@ const pool = createPool({
 Check a candidate value or error against the public boundary guards before acting on it:
 
 ```ts
-import { PoolError, isPoolError, isPoolMax, isPoolSignal } from '@orkestrel/pool'
+import { PoolError, isPoolError, isPoolLimit, isPoolSignal } from '@orkestrel/pool'
 
-isPoolMax(4) // true
-isPoolMax(Infinity) // false: omit max for unbounded capacity
+isPoolLimit(4) // true
+isPoolLimit(Infinity) // false: omit max for unbounded capacity
 isPoolSignal(new AbortController().signal) // true
 
 const failure = new PoolError({ code: 'destroyed' })
