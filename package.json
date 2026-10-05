@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/worker",
-	"version": "0.0.15",
+	"version": "0.0.16",
 	"description": "A typed, resource-backed job worker for the @orkestrel line — a Queue paired with a Pool over an execution seam, plus a node:worker_threads server surface for CPU-parallel jobs. Part of the @orkestrel line.",
 	"keywords": [
 		"async",
