@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import {
-	arrayOf,
-	isBoolean,
-	isNumber,
-	isRecord,
-	isString,
-	numberShape,
-	unionOf,
-} from '@orkestrel/contract'
+import { isBoolean, isNumber, isRecord, isString, numberShape, unionOf } from '@orkestrel/contract'
 import { MemoryQueueStore } from '@orkestrel/queue'
 import { fileURLToPath } from 'node:url'
 import { createNodeWorker, createThread, Dispatch, isReply } from '@src/server'
 import { createTeardown, waitForCondition } from '@orkestrel/test'
-import { buildFixtureURL } from '../../setupServer.js'
+import {
+	buildFixtureURL,
+	isEven,
+	isThrowingInput,
+	isThrowingResult,
+	isWorkerNumberArray,
+	isWorkerPayload,
+	trackNodeWorker,
+} from '../../setupServer.js'
 
 // src/server/helpers.ts — the `isReply` predicate a `Dispatch` filters inbound messages
 // with, proven directly at the end of this file, plus the main-side worker-thread machinery
@@ -25,39 +25,22 @@ import { buildFixtureURL } from '../../setupServer.js'
 // the required flag on Node 22.12–22.17 and Node 23.0–23.5. Fixture paths resolve through the
 // shared `buildFixtureURL` helper, anchored to the workspace root.
 
-const isEven = (value: unknown): value is number => isNumber(value) && value % 2 === 0
-const isThrowingInput = (value: unknown): value is number => {
-	if (value === 1) throw new Error('input-guard-boom')
-	return isNumber(value)
-}
-const isThrowingResult = (value: unknown): value is number => {
-	if (value === 2) throw new Error('result-guard-boom')
-	return isNumber(value)
-}
-const isWorkerPayload = (value: unknown): value is { readonly token: string } => {
-	return isRecord(value) && typeof value.token === 'string'
-}
-const isNumberArray = arrayOf(isNumber)
-
 // Track every worker so it is destroyed even when an assertion throws.
 const teardown = createTeardown()
 afterEach(() => teardown.destroy())
 
-function track<T extends { destroy(): Promise<void> }>(worker: T): T {
-	teardown.add(() => worker.destroy())
-	return worker
-}
-
 describe('createNodeWorker — round-trip over a thread', () => {
 	it('dispatches the input to a thread and resolves the narrowed reply', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({ script: buildFixtureURL('double.ts'), input: isNumber, result: isNumber }),
 		)
 		await expect(worker.enqueue(21)).resolves.toBe(42)
 	})
 
 	it('runs many jobs on a small pool and returns every result', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: isNumber,
@@ -73,7 +56,8 @@ describe('createNodeWorker — round-trip over a thread', () => {
 
 describe('createNodeWorker — concurrency over parallel threads', () => {
 	it('runs up to `concurrency` jobs at once and never exceeds it', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: isNumber,
@@ -93,14 +77,16 @@ describe('createNodeWorker — concurrency over parallel threads', () => {
 
 describe('createNodeWorker — failure + retry', () => {
 	it('rejects with the thread error message when the handler throws', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({ script: buildFixtureURL('fail.ts'), input: isNumber, result: isNumber }),
 		)
 		await expect(worker.enqueue(5)).rejects.toThrow('boom:5')
 	})
 
 	it('re-runs a failing job up to its retry budget (then rejects)', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('fail.ts'),
 				input: isNumber,
@@ -115,7 +101,8 @@ describe('createNodeWorker — failure + retry', () => {
 
 describe('createNodeWorker — stable Queue job identity', () => {
 	it('exposes an explicit enqueue id to the worker handler', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('execution.ts'),
 				input: isNumber,
@@ -126,7 +113,8 @@ describe('createNodeWorker — stable Queue job identity', () => {
 	})
 
 	it('keeps the job id stable while minting a fresh retry correlation id', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('identity.ts'),
 				input: isNumber,
@@ -146,7 +134,8 @@ describe('createNodeWorker — stable Queue job identity', () => {
 	it('exposes a restored MemoryQueueStore id to the worker handler', async () => {
 		const store = new MemoryQueueStore(numberShape())
 		await store.save({ id: 'stable-restore', input: 1, attempts: 0 })
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('execution.ts'),
 				input: isNumber,
@@ -166,7 +155,8 @@ describe('createNodeWorker — stable Queue job identity', () => {
 
 describe('createNodeWorker — timeout terminates + evicts the thread', () => {
 	it('rejects on the per-attempt timeout and replaces the tainted thread', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('slow.ts'),
 				input: isNumber,
@@ -180,7 +170,8 @@ describe('createNodeWorker — timeout terminates + evicts the thread', () => {
 	})
 
 	it('serves a later job on a fresh thread after a timeout eviction', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('slow.ts'),
 				input: isNumber,
@@ -212,7 +203,8 @@ describe('createNodeWorker — in-flight signal abort terminates + evicts the th
 		// `identify.ts` spins for its input and echoes its OWN `threadId`, so the thread the pool
 		// leases is observable from the result — which is what turns "the thread was evicted" into
 		// a determinate assertion rather than a job that merely finishes eventually.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('identify.ts'),
 				input: isNumber,
@@ -254,7 +246,8 @@ describe('createNodeWorker — in-flight signal abort terminates + evicts the th
 	})
 
 	it('serves a queued job on a fresh thread after a signal-abort eviction (handoff)', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('slow.ts'),
 				input: isNumber,
@@ -287,7 +280,8 @@ describe('createNodeWorker — in-flight signal abort terminates + evicts the th
 
 describe('createNodeWorker — a thread crash mid-flight evicts the thread', () => {
 	it('rejects the in-flight job when its thread crashes, then runs a later job on a fresh thread', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('crash.ts'),
 				input: isNumber,
@@ -308,7 +302,8 @@ describe('createNodeWorker — a thread crash mid-flight evicts the thread', () 
 
 describe('createNodeWorker — result-guard violation', () => {
 	it('rejects when a reply does not satisfy the result guard', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('bad-result.ts'),
 				input: isNumber,
@@ -320,7 +315,8 @@ describe('createNodeWorker — result-guard violation', () => {
 	})
 
 	it('contains a throwing result guard and keeps the worker usable', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: isNumber,
@@ -335,7 +331,8 @@ describe('createNodeWorker — result-guard violation', () => {
 
 describe('createNodeWorker — input-guard fail-fast', () => {
 	it('rejects a bad input before it crosses the boundary', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({ script: buildFixtureURL('double.ts'), input: isEven, result: isNumber }),
 		)
 		await expect(worker.enqueue(3)).rejects.toThrow('input did not satisfy input guard')
@@ -344,7 +341,8 @@ describe('createNodeWorker — input-guard fail-fast', () => {
 	})
 
 	it('contains a throwing input guard and keeps the worker usable', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: isThrowingInput,
@@ -359,7 +357,8 @@ describe('createNodeWorker — input-guard fail-fast', () => {
 
 describe('createNodeWorker — non-cloneable result', () => {
 	it('rejects the failed clone and serves a later job on the same concurrency-1 worker', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('noncloneable-result.ts'),
 				input: isNumber,
@@ -376,7 +375,8 @@ describe('createNodeWorker — non-cloneable input', () => {
 	it('rejects (and does not leak) when the input cannot be structured-cloned', async () => {
 		// A guard that admits any object, so the value crosses to `postMessage` — where a
 		// function property fails the structured clone. The job must reject cleanly.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: unionOf(isRecord, isNumber),
@@ -396,7 +396,8 @@ describe('createNodeWorker — concurrency caps the live thread count + reuses i
 		// threads, eight jobs distribute across the pool — the SET of distinct ids returned can
 		// never exceed `concurrency`, proving the pool grows to its cap and no further (one thread
 		// per in-flight slot). All eight still complete.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('identify.ts'),
 				input: isNumber,
@@ -414,7 +415,8 @@ describe('createNodeWorker — concurrency caps the live thread count + reuses i
 		// At concurrency 1 the single pooled thread is returned to idle after each job and, still
 		// `alive`, is re-validated and reused for the next — so every sequential job reports the
 		// SAME `threadId`. Proves idle reuse (not a fresh thread per job).
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('identify.ts'),
 				input: isNumber,
@@ -435,7 +437,8 @@ describe('createNodeWorker — workerData reaches the worker side', () => {
 		// `echo-data.ts` replies with the `workerData` cloned to it at spawn. A nested object
 		// round-trips through the structured clone; the `result` guard narrows the echoed shape.
 		const payload = { token: 'abc', limits: { max: 7, names: ['a', 'b'] } }
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('echo-data.ts'),
 				input: isNumber,
@@ -451,7 +454,8 @@ describe('createNodeWorker — workerData reaches the worker side', () => {
 		// DataCloneError SYNCHRONOUSLY inside the spawn (workerData is cloned at construction,
 		// before the spawn promise). The pool's `create` propagates it and the job rejects cleanly
 		// — never a silent hang waiting on a thread that never spawned.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: isNumber,
@@ -468,10 +472,11 @@ describe('createNodeWorker — large / deep payloads round-trip', () => {
 		// A 10k-element array sums on the thread; both the large input and the numeric result
 		// survive the structured clone intact (a stress on the clone path rather than a scalar).
 		const size = 10_000
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('sum.ts'),
-				input: isNumberArray,
+				input: isWorkerNumberArray,
 				result: isNumber,
 			}),
 		)
@@ -486,7 +491,8 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 		// `load-throw.ts` throws while evaluating. The thread comes `'online'` (so the spawn
 		// resolves a live thread) then immediately `'error'`s / `'exit'`s — the death reaches the
 		// in-flight `Dispatch`, which rejects the job. No hang: the broken script settles the job.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('load-throw.ts'),
 				input: isNumber,
@@ -503,7 +509,8 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 		// events could all fire before the `Dispatch` attached its listeners, losing the signal. The
 		// `NodeThread.death` latch settles that ordering deterministically (the `latched-death path`
 		// suite pins the latch), so the spec runs at the default timeout again.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('does-not-exist.ts'),
 				input: isNumber,
@@ -517,7 +524,8 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 		// The broken-script worker rejects + evicts its dead threads, but the FAILURE is per-worker;
 		// proving the harness recovers, a SEPARATE healthy worker enqueued right after still works —
 		// the runtime is not wedged by the prior load failures.
-		const broken = track(
+		const broken = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('load-throw.ts'),
 				input: isNumber,
@@ -525,7 +533,8 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 			}),
 		)
 		await expect(broken.enqueue(1)).rejects.toBeDefined()
-		const healthy = track(
+		const healthy = trackNodeWorker(
+			teardown,
 			createNodeWorker({ script: buildFixtureURL('double.ts'), input: isNumber, result: isNumber }),
 		)
 		await expect(healthy.enqueue(21)).resolves.toBe(42)
@@ -537,7 +546,8 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 		// the pool never wedges. A SECOND job on the SAME worker is dispatched onto another freshly
 		// spawned thread (the dead ones are evicted, never reused) and rejects the same way. Proves
 		// the eviction-and-respawn cycle is durable under repeated load failures.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('load-throw.ts'),
 				input: isNumber,
@@ -596,12 +606,8 @@ describe('Dispatch — exact terminal causes', () => {
 				{ id: 'exact-crash', signal: controller.signal },
 				isNumber,
 			).promise
-			let failure: unknown
-			try {
-				await pending
-			} catch (error: unknown) {
-				failure = error
-			}
+			const [settlement] = await Promise.allSettled([pending])
+			const failure = settlement?.status === 'rejected' ? settlement.reason : undefined
 			expect(failure).toBe(thread.death)
 			expect(thread.death?.message).toBe('worker thread exited (code 1)')
 		} finally {
@@ -666,7 +672,8 @@ describe('createNodeWorker — protocol robustness (stray messages)', () => {
 		// `stray.ts` posts a message with NO `id` and a well-formed reply for a DIFFERENT id BEFORE
 		// its real reply. The `Dispatch`'s `isReply` filter drops both (id mismatch), so the job still
 		// resolves its own correct value — a thread that chatters on the channel can't corrupt a job.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({ script: buildFixtureURL('stray.ts'), input: isNumber, result: isNumber }),
 		)
 		await expect(worker.enqueue(21)).resolves.toBe(42)
@@ -675,7 +682,8 @@ describe('createNodeWorker — protocol robustness (stray messages)', () => {
 
 describe('createNodeWorker — protocol robustness (matching-id malformed reply)', () => {
 	it('rejects, evicts the tainted thread, and serves later work on a replacement', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('malformed.ts'),
 				input: isNumber,
@@ -694,7 +702,8 @@ describe('createNodeWorker — an already-aborted enqueue signal', () => {
 		// A signal already aborted when the job reaches its `Dispatch` hits the `signal.aborted` short
 		// circuit: it posts the abort + evicts and rejects WITHOUT awaiting a reply. The worker is
 		// not wedged — a later un-aborted job on the same worker still succeeds.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: isNumber,
@@ -713,7 +722,8 @@ describe('createNodeWorker — destroy with multiple threads mid-job', () => {
 		// Three uncooperative jobs spin in flight across a 3-thread pool; `destroy()` aborts the
 		// queue (rejecting them) AND tears the pool down, terminating all three threads. If any
 		// leaked, vitest would hang at exit — so this passing + the process exiting IS the proof.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('slow.ts'),
 				input: isNumber,
@@ -743,7 +753,8 @@ describe('createNodeWorker — rapid enqueue / abort churn through the pool', ()
 		// thread; each surviving job runs on a fresh / reused one. After the dust settles `active`
 		// and `count` return to 0 (no leaked in-flight slot, no orphaned thread), and the worker
 		// still serves a final clean job. The trailing `destroy` (afterEach) terminates the pool.
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: isNumber,
@@ -782,7 +793,8 @@ describe('createNodeWorker — rapid enqueue / abort churn through the pool', ()
 
 describe('createNodeWorker — destroy terminates every thread', () => {
 	it('tears down so the process can exit (no hanging threads)', async () => {
-		const worker = track(
+		const worker = trackNodeWorker(
+			teardown,
 			createNodeWorker({
 				script: buildFixtureURL('double.ts'),
 				input: isNumber,

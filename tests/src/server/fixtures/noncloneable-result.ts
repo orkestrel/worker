@@ -7,5 +7,8 @@ serveWorker({
 		if (value === 'throw') throw new Error('input-guard-boom')
 		return typeof value === 'number'
 	},
-	handler: (value) => (value < 0 ? { execute: () => undefined } : value * 2),
+	handler: (value) => {
+		if (value < 0) return { execute: () => undefined }
+		return value * 2
+	},
 })

@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Worker as ThreadWorker } from 'node:worker_threads'
 import { serveWorker } from '@src/server'
 import { createRecorder, createTeardown, waitForDelay } from '@orkestrel/test'
-import { buildFixtureURL, postRun, ThreadReply } from '../../setupServer.js'
+import {
+	buildFixtureURL,
+	postRun,
+	spawnFixtureThread,
+	ThreadReply,
+	trackFixtureThread,
+} from '../../setupServer.js'
 
 // src/server/handlers.ts — the worker-side `serveWorker` entry, driven MANUALLY
 // (no createNodeWorker): a raw `node:worker_threads` thread over a serve fixture, posting
@@ -16,20 +22,9 @@ import { buildFixtureURL, postRun, ThreadReply } from '../../setupServer.js'
 const teardown = createTeardown()
 afterEach(() => teardown.destroy())
 
-function track(thread: ThreadWorker): ThreadWorker {
-	teardown.add(async () => {
-		await thread.terminate()
-	})
-	return thread
-}
-
-function spawn(name: string): ThreadWorker {
-	return track(new ThreadWorker(buildFixtureURL(name)))
-}
-
 describe('serveWorker — success reply envelope', () => {
 	it('replies { id, ok: true, value } for a valid run message', async () => {
-		const thread = spawn('double.ts')
+		const thread = spawnFixtureThread(teardown, 'double.ts')
 		const pending = new ThreadReply(thread, 'job-1').promise
 		postRun(thread, 'job-1', 'job-1', 21)
 		expect(await pending).toEqual({ id: 'job-1', ok: true, value: 42 })
@@ -38,7 +33,7 @@ describe('serveWorker — success reply envelope', () => {
 
 describe('serveWorker — stable job identity', () => {
 	it('replies by correlation id while exposing the stable Queue id to the handler', async () => {
-		const thread = spawn('execution.ts')
+		const thread = spawnFixtureThread(teardown, 'execution.ts')
 		const pending = new ThreadReply(thread, 'dispatch-1').promise
 		postRun(thread, 'dispatch-1', 'stable-job', 0)
 		expect(await pending).toEqual({ id: 'dispatch-1', ok: true, value: 'stable-job' })
@@ -48,7 +43,10 @@ describe('serveWorker — stable job identity', () => {
 		const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)
 		const handled = new Int32Array(shared)
 		const replies = createRecorder<[unknown]>()
-		const thread = track(new ThreadWorker(buildFixtureURL('execution.ts'), { workerData: shared }))
+		const thread = trackFixtureThread(
+			teardown,
+			new ThreadWorker(buildFixtureURL('execution.ts'), { workerData: shared }),
+		)
 		thread.on('message', replies.handler)
 		const pending = new ThreadReply(thread, 'dispatch-valid').promise
 		thread.postMessage({ id: 'dispatch-missing', command: 'run', input: 1 })
@@ -66,7 +64,7 @@ describe('serveWorker — stable job identity', () => {
 
 describe('serveWorker — input-guard rejection', () => {
 	it('replies an error envelope when the input fails the guard (handler never runs)', async () => {
-		const thread = spawn('double.ts')
+		const thread = spawnFixtureThread(teardown, 'double.ts')
 		const pending = new ThreadReply(thread, 'job-2').promise
 		postRun(thread, 'job-2', 'job-2', 'not-a-number')
 		expect(await pending).toEqual({
@@ -77,7 +75,7 @@ describe('serveWorker — input-guard rejection', () => {
 	})
 
 	it('contains a throwing input guard and keeps serving the thread', async () => {
-		const thread = spawn('noncloneable-result.ts')
+		const thread = spawnFixtureThread(teardown, 'noncloneable-result.ts')
 		const failed = new ThreadReply(thread, 'job-g1').promise
 		postRun(thread, 'job-g1', 'job-g1', 'throw')
 		expect(await failed).toEqual({ id: 'job-g1', ok: false, error: 'input-guard-boom' })
@@ -89,7 +87,7 @@ describe('serveWorker — input-guard rejection', () => {
 
 describe('serveWorker — non-cloneable result', () => {
 	it('falls back to a clone-safe failure reply and keeps serving the thread', async () => {
-		const thread = spawn('noncloneable-result.ts')
+		const thread = spawnFixtureThread(teardown, 'noncloneable-result.ts')
 		const failed = new ThreadReply(thread, 'job-c1').promise
 		postRun(thread, 'job-c1', 'job-c1', -1)
 		const failure = await failed
@@ -104,7 +102,7 @@ describe('serveWorker — non-cloneable result', () => {
 
 describe('serveWorker — handler throw', () => {
 	it('replies { ok: false, error } with the thrown message', async () => {
-		const thread = spawn('fail.ts')
+		const thread = spawnFixtureThread(teardown, 'fail.ts')
 		const pending = new ThreadReply(thread, 'job-3').promise
 		postRun(thread, 'job-3', 'job-3', 7)
 		expect(await pending).toEqual({ id: 'job-3', ok: false, error: 'boom:7' })
@@ -113,7 +111,7 @@ describe('serveWorker — handler throw', () => {
 
 describe('serveWorker — thread exit before reply', () => {
 	it('rejects the pending reply when the real thread exits without an error event', async () => {
-		const thread = spawn('crash.ts')
+		const thread = spawnFixtureThread(teardown, 'crash.ts')
 		const pending = new ThreadReply(thread, 'job-exit').promise
 		postRun(thread, 'job-exit', 'job-exit', -1)
 		await expect(pending).rejects.toThrow('worker thread exited before replying')
@@ -121,8 +119,47 @@ describe('serveWorker — thread exit before reply', () => {
 })
 
 describe('serveWorker — abort fires the handler signal', () => {
+	it('aborts only the matching handler among concurrent runs on one thread', async () => {
+		const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4)
+		const counters = new Int32Array(shared)
+		const thread = trackFixtureThread(
+			teardown,
+			new ThreadWorker(buildFixtureURL('abort-observer.ts'), { workerData: shared }),
+		)
+		const first = new ThreadReply(thread, 'first').promise
+		const second = new ThreadReply(thread, 'second').promise
+		postRun(thread, 'first', 'first', 1)
+		postRun(thread, 'second', 'second', 2)
+		thread.postMessage({ id: 'first', command: 'abort' })
+		expect(await first).toEqual({ id: 'first', ok: true, value: -1 })
+		const barrier = new ThreadReply(thread, 'barrier').promise
+		postRun(thread, 'barrier', 'barrier', 0)
+		expect(await barrier).toEqual({ id: 'barrier', ok: true, value: 0 })
+		expect(Array.from(counters)).toEqual([0, 1, 0, 0])
+		thread.postMessage({ id: 'second', command: 'abort' })
+		expect(await second).toEqual({ id: 'second', ok: true, value: -1 })
+		expect(Array.from(counters)).toEqual([0, 1, 1, 0])
+	})
+
+	it('ignores an abort posted after its run settled', async () => {
+		const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4)
+		const counters = new Int32Array(shared)
+		const thread = trackFixtureThread(
+			teardown,
+			new ThreadWorker(buildFixtureURL('abort-observer.ts'), { workerData: shared }),
+		)
+		const completed = new ThreadReply(thread, 'completed').promise
+		postRun(thread, 'completed', 'completed', 0)
+		expect(await completed).toEqual({ id: 'completed', ok: true, value: 0 })
+		thread.postMessage({ id: 'completed', command: 'abort' })
+		const barrier = new ThreadReply(thread, 'barrier').promise
+		postRun(thread, 'barrier', 'barrier', 3)
+		expect(await barrier).toEqual({ id: 'barrier', ok: true, value: 3 })
+		expect(Array.from(counters)).toEqual([0, 0, 0, 0])
+	})
+
 	it('aborts the in-flight job by correlation id when its stable job id differs', async () => {
-		const thread = spawn('abortable.ts')
+		const thread = spawnFixtureThread(teardown, 'abortable.ts')
 		const pending = new ThreadReply(thread, 'dispatch-4').promise
 		// Start a job that parks on its abort signal, then abort only by correlation id.
 		postRun(thread, 'dispatch-4', 'stable-4', 100)
@@ -132,7 +169,7 @@ describe('serveWorker — abort fires the handler signal', () => {
 	})
 
 	it('ignores an abort for an unknown id', async () => {
-		const thread = spawn('double.ts')
+		const thread = spawnFixtureThread(teardown, 'double.ts')
 		// An abort for a job that was never started is a no-op; a fresh run still works.
 		thread.postMessage({ id: 'ghost', command: 'abort' })
 		const pending = new ThreadReply(thread, 'job-5').promise
@@ -146,7 +183,7 @@ describe('serveWorker — async handler rejection', () => {
 		// `throw-async.ts` rejects after a microtask (not a sync throw like `fail.ts`). The
 		// deferred-into-`then` dispatch must still catch it and reply an error envelope — an async
 		// rejection is reported exactly like a sync throw, never an unhandled rejection / crash.
-		const thread = spawn('throw-async.ts')
+		const thread = spawnFixtureThread(teardown, 'throw-async.ts')
 		const pending = new ThreadReply(thread, 'job-a1').promise
 		postRun(thread, 'job-a1', 'job-a1', 7)
 		expect(await pending).toEqual({ id: 'job-a1', ok: false, error: 'async-boom:7' })
@@ -158,7 +195,7 @@ describe('serveWorker — unknown message command', () => {
 		// A stray control message (an unrecognised `command`) matches neither `isRun` nor `isAbort`,
 		// so `serveWorker` drops it silently — it does not run the handler or reply. A subsequent
 		// valid run then still works, proving the unknown message did not wedge the listener.
-		const thread = spawn('double.ts')
+		const thread = spawnFixtureThread(teardown, 'double.ts')
 		const pending = new ThreadReply(thread, 'job-u2').promise
 		thread.postMessage({ id: 'job-u1', command: 'frobnicate', input: 1 })
 		postRun(thread, 'job-u2', 'job-u2', 21)
@@ -169,7 +206,7 @@ describe('serveWorker — unknown message command', () => {
 	it('ignores a malformed message (no id) without crashing the thread', async () => {
 		// A payload missing `id` fails both inbound guards and is dropped. The thread survives and
 		// answers the next well-formed run — a hostile / malformed message can't crash the worker.
-		const thread = spawn('double.ts')
+		const thread = spawnFixtureThread(teardown, 'double.ts')
 		const pending = new ThreadReply(thread, 'job-u3').promise
 		thread.postMessage({ command: 'run', input: 99 })
 		thread.postMessage(42)
@@ -183,18 +220,18 @@ describe('serveWorker — result shapes round-trip', () => {
 		// `echo.ts` returns its input verbatim, so the reply `value` carries whatever shape was
 		// posted — proving the `{ ok: true, value }` envelope round-trips structured shapes as
 		// well as scalars through the worker side.
-		const thread = spawn('echo.ts')
+		const thread = spawnFixtureThread(teardown, 'echo.ts')
 		const shapes: readonly unknown[] = [
 			{ nested: { count: 2 }, items: [1, 2, 3] },
 			[true, false, null],
 			null,
 			false,
 		]
-		for (let index = 0; index < shapes.length; index += 1) {
+		for (const [index, shape] of shapes.entries()) {
 			const id = `job-s${index}`
 			const pending = new ThreadReply(thread, id).promise
-			postRun(thread, id, id, shapes[index])
-			expect(await pending).toEqual({ id, ok: true, value: shapes[index] })
+			postRun(thread, id, id, shape)
+			expect(await pending).toEqual({ id, ok: true, value: shape })
 		}
 	})
 })
@@ -203,7 +240,8 @@ describe('serveWorker — option capture', () => {
 	it('reads input then handler once and retains both identities across jobs', async () => {
 		const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 3)
 		const counters = new Int32Array(shared)
-		const thread = track(
+		const thread = trackFixtureThread(
+			teardown,
 			new ThreadWorker(buildFixtureURL('serve-options.ts'), { workerData: shared }),
 		)
 		const first = new ThreadReply(thread, 'job-o1').promise
@@ -220,7 +258,8 @@ describe('serveWorker — option capture', () => {
 		const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 3)
 		const counters = new Int32Array(shared)
 		Atomics.store(counters, 2, 1)
-		const thread = track(
+		const thread = trackFixtureThread(
+			teardown,
 			new ThreadWorker(buildFixtureURL('serve-options.ts'), { workerData: shared }),
 		)
 		const failure = Promise.withResolvers<Error>()

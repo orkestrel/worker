@@ -1,7 +1,7 @@
 import type { WorkerPoolOptions } from './setup.js'
 import { describe, expect, it } from 'vitest'
 import { createRecorder, waitForAbort } from '@orkestrel/test'
-import { PoolOptionsProbe, TestQueueStore } from './setup.js'
+import { buildPoolProbeValues, PoolOptionsProbe, TestQueueStore } from './setup.js'
 
 // tests/setup.ts — the environment-agnostic base setup. Proves the two exports the
 // `src:core` (and every environment layered on top of it) suites rely on: `TestQueueStore`'s
@@ -53,25 +53,9 @@ describe('TestQueueStore', () => {
 describe('PoolOptionsProbe', () => {
 	it('records each getter access once, in property order, and returns the configured value', () => {
 		const reads = createRecorder<readonly [property: keyof WorkerPoolOptions<number>]>()
-		const create = (): number => 7
-		const destroy = (): void => undefined
-		const validate = (): boolean => true
-		const on = {}
-		const error = (): void => undefined
-		const probe = new PoolOptionsProbe<number>(
-			{
-				max: 3,
-				min: 3,
-				restarts: 2,
-				watch: (_value, signal) => waitForAbort(signal),
-				on,
-				error,
-				create,
-				destroy,
-				validate,
-			},
-			reads,
-		)
+		const values = buildPoolProbeValues()
+		const { create, destroy, validate, on, error } = values
+		const probe = new PoolOptionsProbe<number>(values, reads)
 
 		expect(probe.max).toBe(3)
 		expect(probe.min).toBe(3)

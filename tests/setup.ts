@@ -1,6 +1,7 @@
 import type { QueueStoreInterface, StoredEntry } from '@orkestrel/queue'
-import type { RecorderInterface } from '@orkestrel/test'
+import type { RecorderInterface, TeardownInterface } from '@orkestrel/test'
 import type { WorkerOptions } from '@src/core'
+import { waitForAbort } from '@orkestrel/test'
 
 // ── Environment-agnostic base setup ───────────────────────────────────────────
 //
@@ -120,3 +121,186 @@ export class PoolOptionsProbe<T> implements WorkerPoolOptions<T> {
 		this.#values = values
 	}
 }
+/** Records mutable fixture state without sharing it between test calls. */
+export class WorkerValue<T> {
+	#value: T
+
+	constructor(value: T) {
+		this.#value = value
+	}
+
+	get value(): T {
+		return this.#value
+	}
+
+	set value(value: T) {
+		this.#value = value
+	}
+}
+
+/** Records simultaneous handler entries and their historical maximum. */
+export class WorkerActivity {
+	#active = 0
+	#peak = 0
+
+	get peak(): number {
+		return this.#peak
+	}
+
+	enter(): void {
+		this.#active += 1
+		this.#peak = Math.max(this.#peak, this.#active)
+	}
+
+	leave(): void {
+		this.#active -= 1
+	}
+}
+
+/** Represents a worker whose disposal can be registered by a test. */
+export interface DestroyableWorker {
+	readonly emitter: { readonly destroyed: boolean }
+	destroy(): Promise<void>
+}
+
+/** Registers worker cleanup while preserving the caller's worker type. */
+export function trackWorker<T extends DestroyableWorker>(
+	teardown: TeardownInterface,
+	worker: T,
+): T {
+	teardown.add(() => (worker.emitter.destroyed ? undefined : worker.destroy()))
+	return worker
+}
+
+/** Builds inert worker options for runtime option validation. */
+export function buildWorkerOptions(): WorkerOptions<undefined, number, void> {
+	return { pool: { create: () => 0 }, handler: () => {} }
+}
+
+/** Builds a pool getter that records and throws when validation reaches it. */
+export function buildHostilePoolOptions(
+	reads: RecorderInterface<[]>,
+	error: Error,
+): WorkerOptions<undefined, number, void> {
+	return {
+		concurrency: 0,
+		handler: () => {},
+		get pool(): WorkerPoolOptions<number> {
+			reads.handler()
+			throw error
+		},
+	}
+}
+
+/** Builds a handler that waits on the gate selected by its input. */
+export function buildGatedWorkerOptions(
+	pool: WorkerPoolOptions<number>,
+	first: Promise<void>,
+	second: Promise<void>,
+): WorkerOptions<number, number, number> {
+	return {
+		pool,
+		handler: async (input) => {
+			if (input === 1) await first
+			else await second
+			return input
+		},
+	}
+}
+
+/** Builds pool options with an own enumerable changing maximum getter. */
+export function buildVolatilePool(
+	create: () => number,
+	reads: RecorderInterface<[string]>,
+): WorkerPoolOptions<number> {
+	const count = new WorkerValue(0)
+	return {
+		create,
+		get max() {
+			count.value += 1
+			reads.handler('max')
+			return count.value === 1 ? 1 : 0
+		},
+	}
+}
+
+/** Records successive reads of each volatile worker option. */
+export class WorkerOptionReads {
+	readonly #counts = new Map<string, number>()
+	readonly #reads: RecorderInterface<[string]>
+
+	constructor(reads: RecorderInterface<[string]>) {
+		this.#reads = reads
+	}
+
+	read(name: string): boolean {
+		const count = (this.#counts.get(name) ?? 0) + 1
+		this.#counts.set(name, count)
+		this.#reads.handler(name)
+		return count === 1
+	}
+}
+
+/** Builds own enumerable option getters that switch after their first read. */
+export function buildVolatileWorkerOptions(
+	initial: Required<WorkerOptions<number, number, number>>,
+	later: Required<WorkerOptions<number, number, number>>,
+	reads: RecorderInterface<[string]>,
+): WorkerOptions<number, number, number> {
+	const access = new WorkerOptionReads(reads)
+	return {
+		get concurrency() {
+			return access.read('concurrency') ? initial.concurrency : later.concurrency
+		},
+		get handler() {
+			return access.read('handler') ? initial.handler : later.handler
+		},
+		get on() {
+			return access.read('on') ? initial.on : later.on
+		},
+		get error() {
+			return access.read('error') ? initial.error : later.error
+		},
+		get retries() {
+			return access.read('retries') ? initial.retries : later.retries
+		},
+		get timeout() {
+			return access.read('timeout') ? initial.timeout : later.timeout
+		},
+		get store() {
+			return access.read('store') ? initial.store : later.store
+		},
+		get pool() {
+			return access.read('pool') ? initial.pool : later.pool
+		},
+	}
+}
+
+/** Builds complete pool values for the getter identity proof. */
+export function buildPoolProbeValues(): Required<WorkerPoolOptions<number>> {
+	return {
+		max: 3,
+		min: 3,
+		restarts: 2,
+		watch: (_value, signal) => waitForAbort(signal),
+		on: {},
+		error: (): void => undefined,
+		create: (): number => 7,
+		destroy: (): void => undefined,
+		validate: (): boolean => true,
+	}
+}
+
+/** Names the lifecycle events observed by the worker facade proofs. */
+export const WORKER_EVENTS: readonly [
+	'enqueue',
+	'start',
+	'retry',
+	'success',
+	'failure',
+	'abort',
+	'drain',
+] = ['enqueue', 'start', 'retry', 'success', 'failure', 'abort', 'drain']
+
+/** Selects the lifecycle names observed by worker facade recorders. */
+export type WorkerEvent = (typeof WORKER_EVENTS)[number]

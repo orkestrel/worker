@@ -164,14 +164,16 @@ export class Dispatch<TResult> {
 		this.#settled = true
 		this.#detach()
 		if (this.#thread instanceof Thread) this.#thread.evict()
-		let termination: Promise<number>
-		try {
-			termination = this.#worker.terminate()
-		} catch (cause: unknown) {
-			this.#reject(new AggregateError([error, ...notification, cause], 'worker termination failed'))
+		const termination = attempt(() => this.#worker.terminate())
+		if (!termination.success) {
+			const failure = new AggregateError(
+				[error, ...notification, termination.error],
+				'worker termination failed',
+			)
+			this.#reject(failure)
 			return
 		}
-		void termination.then(
+		void termination.value.then(
 			() => {
 				if (notification.length === 0) this.#reject(error)
 				else {

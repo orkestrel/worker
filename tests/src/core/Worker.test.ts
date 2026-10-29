@@ -1,8 +1,8 @@
 import type { PoolOptions } from '@orkestrel/pool'
 import type { WorkerEventMap, WorkerOptions } from '@src/core'
-import type { WorkerPoolOptions } from '../../setup.js'
+import type { WorkerEvent, WorkerPoolOptions } from '../../setup.js'
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
-import { stringShape } from '@orkestrel/contract'
+import { attempt, stringShape } from '@orkestrel/contract'
 import { isPoolError } from '@orkestrel/pool'
 import { createMemoryQueueStore, isQueueError } from '@orkestrel/queue'
 import { Worker } from '@src/core'
@@ -15,20 +15,22 @@ import {
 	waitForCondition,
 	waitForDelay,
 } from '@orkestrel/test'
-import { PoolOptionsProbe, TestQueueStore } from '../../setup.js'
-
-type DestroyableWorker = {
-	readonly emitter: { readonly destroyed: boolean }
-	destroy(): Promise<void>
-}
+import {
+	buildGatedWorkerOptions,
+	buildHostilePoolOptions,
+	buildVolatilePool,
+	buildVolatileWorkerOptions,
+	buildWorkerOptions,
+	PoolOptionsProbe,
+	TestQueueStore,
+	trackWorker,
+	WORKER_EVENTS,
+	WorkerActivity,
+	WorkerValue,
+} from '../../setup.js'
 
 const teardown = createTeardown()
 afterEach(() => teardown.destroy())
-
-function track<T extends DestroyableWorker>(worker: T): T {
-	teardown.add(() => (worker.emitter.destroyed ? undefined : worker.destroy()))
-	return worker
-}
 
 // src/core/Worker.ts — the Queue⨉Pool facade. Real behaviour, no mocks: a
 // counting `create` hook proves resources are reused and never exceed the pool max,
@@ -53,7 +55,7 @@ describe('Worker — runs the handler with a pooled resource', () => {
 				return `${input}:${resource}`
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		await expect(worker.enqueue(3)).resolves.toBe('3:7')
 		expect(seen.calls).toEqual([[3, 7]])
 	})
@@ -71,17 +73,14 @@ describe('Worker — queue option validation', () => {
 			Number.MAX_SAFE_INTEGER + 1,
 		]
 		for (const concurrency of invalid) {
-			let failure: unknown
-			try {
-				const normalized = new Worker<undefined, number, void>({
+			const construction = attempt(() => {
+				return new Worker<undefined, number, void>({
 					concurrency,
 					pool: { create: () => 0, max: 0 },
 					handler: () => {},
 				})
-				void normalized
-			} catch (error) {
-				failure = error
-			}
+			})
+			const failure = construction.success ? undefined : construction.error
 			if (!isQueueError(failure)) throw new Error('expected queue concurrency validation')
 			expect(failure.code).toBe('invalid')
 			expect(failure.context).toEqual({ option: 'concurrency', value: concurrency })
@@ -89,17 +88,15 @@ describe('Worker — queue option validation', () => {
 	})
 
 	it('preserves the queue integer timeout contract at the worker boundary', async () => {
-		let worker: Worker<undefined, number, void> | undefined
-		let failure: unknown
-		try {
-			worker = new Worker({
+		const construction = attempt(() => {
+			return new Worker({
 				timeout: 0.5,
 				pool: { create: () => 0 },
 				handler: () => {},
 			})
-		} catch (error) {
-			failure = error
-		}
+		})
+		const worker = construction.success ? construction.value : undefined
+		const failure = construction.success ? undefined : construction.error
 		try {
 			if (!isQueueError(failure)) throw new Error('expected queue timeout validation')
 			expect(failure.code).toBe('invalid')
@@ -110,18 +107,11 @@ describe('Worker — queue option validation', () => {
 	})
 
 	it('passes runtime null concurrency to the queue with its exact diagnostic context', async () => {
-		const options = {
-			pool: { create: () => 0 },
-			handler: () => {},
-		}
+		const options = buildWorkerOptions()
 		Object.defineProperty(options, 'concurrency', { enumerable: true, value: null })
-		let worker: Worker<undefined, number, void> | undefined
-		let failure: unknown
-		try {
-			worker = new Worker(options)
-		} catch (error) {
-			failure = error
-		}
+		const construction = attempt(() => new Worker(options))
+		const worker = construction.success ? construction.value : undefined
+		const failure = construction.success ? undefined : construction.error
 		try {
 			if (!isQueueError(failure)) throw new Error('expected queue concurrency validation')
 			expect(failure.code).toBe('invalid')
@@ -134,21 +124,9 @@ describe('Worker — queue option validation', () => {
 	it('validates queue concurrency before reading a hostile pool getter', () => {
 		const poolReads = createRecorder<[]>()
 		const hostile = new Error('hostile pool getter')
-		const options = {
-			concurrency: 0,
-			handler: () => {},
-			get pool(): WorkerPoolOptions<number> {
-				poolReads.handler()
-				throw hostile
-			},
-		}
-		let failure: unknown
-		try {
-			const blocked = new Worker<undefined, number, void>(options)
-			void blocked
-		} catch (error) {
-			failure = error
-		}
+		const options = buildHostilePoolOptions(poolReads, hostile)
+		const construction = attempt(() => new Worker<undefined, number, void>(options))
+		const failure = construction.success ? undefined : construction.error
 		if (!isQueueError(failure)) throw new Error('expected queue concurrency validation')
 		expect(failure.code).toBe('invalid')
 		expect(failure.context).toEqual({ option: 'concurrency', value: 0 })
@@ -165,7 +143,8 @@ describe('Worker pool option forwarding', () => {
 
 	it('warms min before work and leaves max defaulting to the pool despite concurrency', async () => {
 		const { create, destroy, created, destroyed } = createResourceFactory()
-		const worker = track(
+		const worker = trackWorker(
+			teardown,
 			new Worker<number, number, number>({
 				concurrency: 1,
 				pool: { create, destroy, min: 2, restarts: 0 },
@@ -185,7 +164,8 @@ describe('Worker pool option forwarding', () => {
 	it('forwards restarts to bound failed creates and preserves the pool failure cause', async () => {
 		const failure = new Error('resource creation failed')
 		const creates = createRecorder<[]>()
-		const worker = track(
+		const worker = trackWorker(
+			teardown,
 			new Worker<undefined, number, void>({
 				pool: {
 					min: 1,
@@ -218,7 +198,8 @@ describe('Worker pool option forwarding', () => {
 		const { create } = createResourceFactory()
 		const watched = createRecorder<[number, AbortSignal]>()
 		const disposed = createRecorder<[number, boolean | undefined]>()
-		const worker = track(
+		const worker = trackWorker(
+			teardown,
 			new Worker<number, number, number>({
 				concurrency: 2,
 				pool: {
@@ -249,7 +230,8 @@ describe('Worker pool option forwarding', () => {
 		const { create, destroy, created, destroyed } = createResourceFactory()
 		const loss = new AbortController()
 		const events = createRecorder<[string]>()
-		const worker = track(
+		const worker = trackWorker(
+			teardown,
 			new Worker<undefined, number, number>({
 				pool: {
 					create,
@@ -275,16 +257,14 @@ describe('Worker pool option forwarding', () => {
 	})
 
 	it('refuses conflicting min and max at construction with the pool diagnostic', async () => {
-		let worker: Worker<undefined, number, void> | undefined
-		let failure: unknown
-		try {
-			worker = new Worker({
+		const construction = attempt(() => {
+			return new Worker({
 				pool: { create: () => 0, min: 2, max: 3, restarts: 0 },
 				handler: () => {},
 			})
-		} catch (error) {
-			failure = error
-		}
+		})
+		const worker = construction.success ? construction.value : undefined
+		const failure = construction.success ? undefined : construction.error
 		try {
 			if (!isPoolError(failure)) throw new Error('expected pool minimum validation')
 			expect(failure.code).toBe('invalid')
@@ -297,15 +277,11 @@ describe('Worker pool option forwarding', () => {
 
 describe('Worker constructor option boundaries', () => {
 	it('passes runtime null pool max to the pool with its exact diagnostic context', async () => {
-		const pool = { create: () => 0 }
+		const { pool } = buildWorkerOptions()
 		Object.defineProperty(pool, 'max', { enumerable: true, value: null })
-		let worker: Worker<undefined, number, void> | undefined
-		let failure: unknown
-		try {
-			worker = new Worker({ pool, handler: () => {} })
-		} catch (error) {
-			failure = error
-		}
+		const construction = attempt(() => new Worker({ pool, handler: () => {} }))
+		const worker = construction.success ? construction.value : undefined
+		const failure = construction.success ? undefined : construction.error
 		try {
 			if (!isPoolError(failure)) throw new Error('expected pool maximum validation')
 			expect(failure.code).toBe('invalid')
@@ -321,17 +297,10 @@ describe('Worker constructor option boundaries', () => {
 		const second = Promise.withResolvers<void>()
 		const pool = { create }
 		Object.defineProperty(pool, 'max', { enumerable: true, value: undefined })
-		const options = {
-			pool,
-			handler: async (input: number) => {
-				if (input === 1) await first.promise
-				else await second.promise
-				return input
-			},
-		}
+		const options = buildGatedWorkerOptions(pool, first.promise, second.promise)
 		Object.defineProperty(options, 'concurrency', { enumerable: true, value: undefined })
 		const worker = new Worker<number, number, number>(options)
-		track(worker)
+		trackWorker(teardown, worker)
 		const work = Promise.all([worker.enqueue(1), worker.enqueue(2)])
 		try {
 			await waitForDelay(10)
@@ -367,89 +336,48 @@ describe('Worker constructor option boundaries', () => {
 		const first = Promise.withResolvers<void>()
 		const second = Promise.withResolvers<void>()
 		const listenerFailure = new Error('volatile listener failed')
-		let concurrencyReads = 0
-		let handlerReads = 0
-		let onReads = 0
-		let errorReads = 0
-		let retriesReads = 0
-		let timeoutReads = 0
-		let storeReads = 0
-		let poolReads = 0
-		let maxReads = 0
-		const initialPool = {
-			create: () => {
-				initialCreate.handler()
-				return 7
+		const options = buildVolatileWorkerOptions(
+			{
+				concurrency: 2,
+				handler: async (input, resource) => {
+					initialHandler.handler(input, resource)
+					if (input === 1) await first.promise
+					else await second.promise
+					return input + resource
+				},
+				on: { success: initialSuccess.handler },
+				error: initialErrors.handler,
+				retries: 0,
+				timeout: 0,
+				store: initialStore,
+				pool: buildVolatilePool(() => {
+					initialCreate.handler()
+					return 7
+				}, reads),
 			},
-			get max() {
-				maxReads += 1
-				reads.handler('max')
-				return maxReads === 1 ? 1 : 0
+			{
+				concurrency: 0,
+				handler: (input, resource) => {
+					laterHandler.handler(input, resource)
+					return -1
+				},
+				on: { success: laterSuccess.handler },
+				error: laterErrors.handler,
+				retries: -1,
+				timeout: -1,
+				store: laterStore,
+				pool: {
+					create: () => {
+						laterCreate.handler()
+						return -1
+					},
+					max: 0,
+				},
 			},
-		}
-		const laterPool = {
-			create: () => {
-				laterCreate.handler()
-				return -1
-			},
-			max: 0,
-		}
-		const options = {
-			get concurrency() {
-				concurrencyReads += 1
-				reads.handler('concurrency')
-				return concurrencyReads === 1 ? 2 : 0
-			},
-			get handler() {
-				handlerReads += 1
-				reads.handler('handler')
-				return handlerReads === 1
-					? async (input: number, resource: number) => {
-							initialHandler.handler(input, resource)
-							if (input === 1) await first.promise
-							else await second.promise
-							return input + resource
-						}
-					: (input: number, resource: number) => {
-							laterHandler.handler(input, resource)
-							return -1
-						}
-			},
-			get on() {
-				onReads += 1
-				reads.handler('on')
-				return onReads === 1
-					? { success: initialSuccess.handler }
-					: { success: laterSuccess.handler }
-			},
-			get error() {
-				errorReads += 1
-				reads.handler('error')
-				return errorReads === 1 ? initialErrors.handler : laterErrors.handler
-			},
-			get retries() {
-				retriesReads += 1
-				reads.handler('retries')
-				return retriesReads === 1 ? 0 : -1
-			},
-			get timeout() {
-				timeoutReads += 1
-				reads.handler('timeout')
-				return timeoutReads === 1 ? 0 : -1
-			},
-			get store() {
-				storeReads += 1
-				reads.handler('store')
-				return storeReads === 1 ? initialStore : laterStore
-			},
-			get pool() {
-				poolReads += 1
-				reads.handler('pool')
-				return poolReads === 1 ? initialPool : laterPool
-			},
-		}
+			reads,
+		)
 		const worker = new Worker<number, number, number>(options)
-		track(worker)
+		trackWorker(teardown, worker)
 		worker.emitter.on('success', () => {
 			throw listenerFailure
 		})
@@ -518,35 +446,43 @@ describe('Worker constructor option boundaries', () => {
 		const listenerFailure = new Error('pool listener failed')
 		const watched = createRecorder<[number, AbortSignal]>()
 		const laterWatched = createRecorder<[number]>()
-		const initial: Required<WorkerPoolOptions<number>> = {
-			max: 1,
-			min: 1,
-			restarts: 1,
-			watch: (value, signal) => {
-				watched.handler(value, signal)
-				return waitForAbort(signal)
-			},
-			on: {
-				create: () => {
-					events.handler('create')
-					throw listenerFailure
+		const pool = new PoolOptionsProbe(
+			{
+				max: 1,
+				min: 1,
+				restarts: 1,
+				watch: (value, signal) => {
+					watched.handler(value, signal)
+					return waitForAbort(signal)
 				},
-				acquire: () => events.handler('acquire'),
-				release: () => events.handler('release'),
-				destroy: () => events.handler('destroy'),
+				on: {
+					create: () => {
+						events.handler('create')
+						throw listenerFailure
+					},
+					acquire: () => events.handler('acquire'),
+					release: () => events.handler('release'),
+					destroy: () => events.handler('destroy'),
+				},
+				error: errors.handler,
+				create: () => {
+					created.handler()
+					return 7
+				},
+				destroy: destroyed.handler,
+				validate: (value) => {
+					validated.handler(value)
+					return true
+				},
 			},
-			error: errors.handler,
-			create: () => {
-				created.handler()
-				return 7
-			},
-			destroy: destroyed.handler,
-			validate: (value) => {
-				validated.handler(value)
-				return true
-			},
-		}
-		const later: Required<WorkerPoolOptions<number>> = {
+			reads,
+		)
+		const worker = new Worker<number, number, number>({
+			pool,
+			handler: (input, resource) => input + resource,
+		})
+		trackWorker(teardown, worker)
+		pool.replace({
 			max: 2,
 			min: 2,
 			restarts: 0,
@@ -565,14 +501,7 @@ describe('Worker constructor option boundaries', () => {
 				laterValidated.handler(value)
 				return false
 			},
-		}
-		const pool = new PoolOptionsProbe(initial, reads)
-		const worker = new Worker<number, number, number>({
-			pool,
-			handler: (input, resource) => input + resource,
 		})
-		track(worker)
-		pool.replace(later)
 
 		await expect(worker.enqueue(1)).resolves.toBe(8)
 		await expect(worker.enqueue(2)).resolves.toBe(9)
@@ -629,7 +558,7 @@ describe('Worker — resource reuse + the pool cap', () => {
 				await gate.promise
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 
 		const all = [0, 1, 2, 3].map((input) => worker.enqueue(input))
 		const settlement = Promise.allSettled(all)
@@ -663,17 +592,17 @@ describe('Worker — resource reuse + the pool cap', () => {
 describe('Worker — release on throw', () => {
 	it('releases the resource even when the handler throws, so a later job reuses it', async () => {
 		const { create, created } = createResourceFactory()
-		let attempt = 0
+		const attempts = new WorkerValue(0)
 		const worker = new Worker<undefined, number, string>({
 			concurrency: 1,
 			pool: { create },
 			handler: () => {
-				attempt += 1
-				if (attempt === 1) throw new Error('boom')
+				attempts.value += 1
+				if (attempts.value === 1) throw new Error('boom')
 				return 'recovered'
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 
 		await expect(worker.enqueue(undefined)).rejects.toThrow('boom')
 		// The second job reuses the released resource — no second create.
@@ -692,7 +621,7 @@ describe('Worker — lifecycle delegation', () => {
 				return input
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		worker.pause()
 		const pending = worker.enqueue(1)
 		await waitForDelay(10)
@@ -724,7 +653,7 @@ describe('Worker — lifecycle delegation', () => {
 				return gate.promise
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const running = worker.enqueue('inflight')
 		const waiting = worker.enqueue('pending')
 		const settlement = Promise.allSettled([running, waiting])
@@ -749,7 +678,7 @@ describe('Worker — lifecycle delegation', () => {
 			pool: { create: () => 0 },
 			handler: (input) => input,
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		worker.pause()
 		const pending = worker.enqueue(1)
 		const stopping = worker.stop()
@@ -765,23 +694,23 @@ describe('Worker — lifecycle delegation', () => {
 			pool: { create: () => 0 },
 			handler: (input) => (input === 0 ? gate.promise : Promise.resolve(input)),
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const running = worker.enqueue(0)
 		const dropped = worker.enqueue(1)
 		const settlement = Promise.allSettled([running, dropped])
-		let clearing: Promise<void> | undefined
+		const clearing = new WorkerValue<Promise<void> | undefined>(undefined)
 		try {
 			await waitForDelay(10)
 
-			clearing = worker.clear()
+			clearing.value = worker.clear()
 			await expect(dropped).rejects.toThrow('cleared')
-			await expect(clearing).resolves.toBeUndefined()
+			await expect(clearing.value).resolves.toBeUndefined()
 			gate.resolve(99)
 			await expect(running).resolves.toBe(99)
 		} finally {
 			gate.resolve(99)
 			await settlement
-			if (clearing !== undefined) await Promise.allSettled([clearing])
+			if (clearing.value !== undefined) await Promise.allSettled([clearing.value])
 		}
 	})
 })
@@ -802,15 +731,17 @@ describe('Worker — a signal-ignoring handler keeps its resource leased', () =>
 				await gate.promise
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 
 		// Job A times out (it ignores the signal): the attempt rejects and the queue slot
 		// frees — but A's handler is still blocked on the gate, so its `finally` has not run
 		// and the leased resource (the first resource) is NOT yet released back to the pool.
 		const a = worker.enqueue(0)
 		const aSettlement = Promise.allSettled([a])
-		let b: Promise<void> | undefined
-		let bSettlement: Promise<Array<PromiseSettledResult<void>>> | undefined
+		const b = new WorkerValue<Promise<void> | undefined>(undefined)
+		const bSettlement = new WorkerValue<Promise<Array<PromiseSettledResult<void>>> | undefined>(
+			undefined,
+		)
 		try {
 			await expect(a).rejects.toThrow('attempt timed out')
 			expect(worker.active).toBe(0) // the queue slot is free again
@@ -819,8 +750,8 @@ describe('Worker — a signal-ignoring handler keeps its resource leased', () =>
 			// Job B claims the freed slot and tries to acquire — but the pool is at max with
 			// nothing idle (the first resource is still held by A), so B PARKS on the pool. B opts out
 			// of the deadline (`timeout: 0`) so it waits for the resource rather than timing out.
-			b = worker.enqueue(1, { timeout: 0 })
-			bSettlement = Promise.allSettled([b])
+			b.value = worker.enqueue(1, { timeout: 0 })
+			bSettlement.value = Promise.allSettled([b.value])
 			await waitForDelay(30) // past A's timeout window — B would have run if it could
 			expect(started.calls).toEqual([[0]]) // only A ever started; B is blocked on acquire
 			expect(created.count).toBe(1) // still no second resource — B did not create one
@@ -829,13 +760,13 @@ describe('Worker — a signal-ignoring handler keeps its resource leased', () =>
 			// and the pool hands that same resource (FIFO) to B's parked acquire — reused, not
 			// recreated.
 			gate.resolve()
-			await b
+			await b.value
 			expect(started.calls).toEqual([[0], [1]]) // B ran after the resource came free
 			expect(created.count).toBe(1) // B reused the first resource — no new create
 		} finally {
 			gate.resolve()
 			await aSettlement
-			if (bSettlement !== undefined) await bSettlement
+			if (bSettlement.value !== undefined) await bSettlement.value
 		}
 	})
 })
@@ -846,16 +777,16 @@ describe('Worker — destroy tears down the pool', () => {
 			pool: { create: () => 0 },
 			handler: () => {},
 		})
-		track(worker)
-		let reentrant: Promise<void> | undefined
+		trackWorker(teardown, worker)
+		const reentrant = new WorkerValue<Promise<void> | undefined>(undefined)
 		worker.emitter.on('abort', () => {
-			reentrant = worker.destroy()
+			reentrant.value = worker.destroy()
 		})
 
 		const ending = worker.destroy()
 		const repeated = worker.destroy()
-		if (reentrant === undefined) throw new Error('expected destroy reentry from abort')
-		expect(reentrant).toBe(ending)
+		if (reentrant.value === undefined) throw new Error('expected destroy reentry from abort')
+		expect(reentrant.value).toBe(ending)
 		expect(repeated).toBe(ending)
 		await expect(ending).resolves.toBeUndefined()
 		expect(worker.emitter.destroyed).toBe(true)
@@ -877,7 +808,7 @@ describe('Worker — destroy tears down the pool', () => {
 			pool: { create: () => 0, destroy: () => order.handler('pool') },
 			handler: () => {},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const work = worker.enqueue(undefined)
 		const workSettlement = Promise.allSettled([work])
 		await removing.promise
@@ -919,7 +850,7 @@ describe('Worker — destroy tears down the pool', () => {
 			pool: { create: () => 0 },
 			handler: () => {},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const work = worker.enqueue(undefined)
 		const workSettlement = Promise.allSettled([work])
 		await removing.promise
@@ -970,7 +901,7 @@ describe('Worker — destroy tears down the pool', () => {
 			},
 			handler: () => {},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const work = worker.enqueue(undefined)
 		const workSettlement = Promise.allSettled([work])
 		await queueRemoving.promise
@@ -1026,7 +957,7 @@ describe('Worker — destroy tears down the pool', () => {
 					})
 				}),
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const running = worker.enqueue(undefined)
 		await waitForDelay(10)
 		expect(worker.active).toBe(1)
@@ -1053,7 +984,7 @@ describe('Worker — destroy tears down the pool', () => {
 			},
 			handler: () => {},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		await worker.enqueue(undefined)
 
 		const ending = worker.destroy()
@@ -1084,7 +1015,7 @@ describe('Worker — destroy tears down the pool', () => {
 			},
 			handler: () => {},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		await worker.enqueue(undefined)
 
 		const [result] = await Promise.allSettled([worker.destroy()])
@@ -1109,7 +1040,7 @@ describe('Worker — durability passthrough + restore', () => {
 			pool: { create: () => 0 },
 			handler: (input) => input,
 		})
-		track(a)
+		trackWorker(teardown, a)
 		a.pause()
 		void a.enqueue('job').catch(() => {})
 		await waitForDelay(10)
@@ -1126,7 +1057,7 @@ describe('Worker — durability passthrough + restore', () => {
 				return input
 			},
 		})
-		track(b)
+		trackWorker(teardown, b)
 		await b.restore()
 		b.start()
 		await waitForDelay(20)
@@ -1140,7 +1071,7 @@ describe('Worker — durability passthrough + restore', () => {
 			pool: { create: () => 0 },
 			handler: (input) => input,
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		await expect(worker.restore()).resolves.toBeUndefined()
 	})
 })
@@ -1154,22 +1085,20 @@ describe('Worker — resource bound holds under saturation', () => {
 	it('runs 40 jobs through a concurrency-3 worker reusing at most 3 resources', async () => {
 		const { create, created } = createResourceFactory()
 		const concurrency = 3
-		let liveResources = 0
-		let peakResources = 0
+		const activity = new WorkerActivity()
 		const ran = createRecorder<[number]>()
 		const worker = new Worker<number, number, number>({
 			concurrency,
 			pool: { create },
 			handler: async (input) => {
-				liveResources += 1
-				peakResources = Math.max(peakResources, liveResources)
+				activity.enter()
 				await waitForDelay(1)
 				ran.handler(input)
-				liveResources -= 1
+				activity.leave()
 				return input
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 
 		const results = await Promise.all(
 			Array.from({ length: 40 }, (_unused, index) => worker.enqueue(index)),
@@ -1178,7 +1107,7 @@ describe('Worker — resource bound holds under saturation', () => {
 		// Each job ran exactly once.
 		expect(ran.count).toBe(40)
 		// Never more than `concurrency` resources held at once, and at most that many created.
-		expect(peakResources).toBeLessThanOrEqual(concurrency)
+		expect(activity.peak).toBeLessThanOrEqual(concurrency)
 		expect(created.count).toBeLessThanOrEqual(concurrency)
 		expect(worker.active).toBe(0)
 		expect(worker.count).toBe(0)
@@ -1194,19 +1123,19 @@ describe('Worker — failing jobs release resources (no pool starvation)', () =>
 	it('survives a burst of throwing handlers and still serves a later success', async () => {
 		const { create, created } = createResourceFactory()
 		const failures = createRecorder<[number]>()
-		let mode: 'fail' | 'pass' = 'fail'
+		const fails = new WorkerValue(true)
 		const worker = new Worker<number, number, string>({
 			concurrency: 2,
 			pool: { create },
 			handler: (input) => {
-				if (mode === 'fail') {
+				if (fails.value) {
 					failures.handler(input)
 					throw new Error(`fail ${input}`)
 				}
 				return `ok ${input}`
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 
 		// A burst of 10 failing jobs — each must release its resource back to the pool.
 		const failed = await Promise.allSettled(
@@ -1218,7 +1147,7 @@ describe('Worker — failing jobs release resources (no pool starvation)', () =>
 		expect(created.count).toBeLessThanOrEqual(2)
 
 		// The pool is not starved: a later success acquires + runs against a reused resource.
-		mode = 'pass'
+		fails.value = false
 		await expect(worker.enqueue(99)).resolves.toBe('ok 99')
 		expect(created.count).toBeLessThanOrEqual(2)
 		expect(worker.active).toBe(0)
@@ -1238,23 +1167,21 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 		const third = Promise.withResolvers<void>()
 		const fourth = Promise.withResolvers<void>()
 		const gates = [first, second, third, fourth]
-		let liveHandlers = 0
-		let peakHandlers = 0
+		const activity = new WorkerActivity()
 		// concurrency 4 but only 2 resources — at most 2 handlers can truly run at once
 		// because a handler only proceeds after it has ACQUIRED a resource.
 		const worker = new Worker<number, number, void>({
 			concurrency: 4,
 			pool: { create, max: 2 },
 			handler: async (input) => {
-				liveHandlers += 1
-				peakHandlers = Math.max(peakHandlers, liveHandlers)
+				activity.enter()
 				const gate = gates[input]
 				if (gate === undefined) throw new Error('missing gate')
 				await gate.promise
-				liveHandlers -= 1
+				activity.leave()
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 
 		const all = [0, 1, 2, 3].map((input) => worker.enqueue(input))
 		const settlement = Promise.allSettled(all)
@@ -1263,7 +1190,7 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 			// Only two resources exist, so only two handlers are actually running their body;
 			// the other two claimed queue slots but PARK on the pool acquire.
 			expect(created.count).toBe(2)
-			expect(peakHandlers).toBe(2)
+			expect(activity.peak).toBe(2)
 
 			// Releasing the first two lets the parked two acquire the freed resources.
 			first.resolve()
@@ -1275,7 +1202,7 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 			fourth.resolve()
 			await Promise.all(all)
 			// Throughout, no more than the pool max ran concurrently.
-			expect(peakHandlers).toBe(2)
+			expect(activity.peak).toBe(2)
 			expect(worker.active).toBe(0)
 			expect(worker.count).toBe(0)
 		} finally {
@@ -1303,7 +1230,7 @@ describe('Worker — pool max vs queue concurrency mismatch', () => {
 				await gate.promise
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 
 		const all = [0, 1].map((input) => worker.enqueue(input))
 		const settlement = Promise.allSettled(all)
@@ -1346,7 +1273,7 @@ describe('Worker — destroy mid-flight tears down queue and pool together', () 
 					})
 				}),
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 
 		const work = [0, 1, 2, 3].map((input) => worker.enqueue(input))
 		await waitForDelay(10)
@@ -1378,32 +1305,13 @@ describe('Worker — destroy mid-flight tears down queue and pool together', () 
 // throw never prevents a sibling listener and reaches the emitter's `error` handler, while the
 // worker stays fully functional (jobs still run against pooled resources, counts balanced).
 
-// The WorkerEventMap event names recorded across the emitter tests — fed to the shared
-// `createRecorders`; the per-event wiring is centralized, and this file keeps only the
-// names its scenarios observe.
-const WORKER_EVENTS: readonly [
-	'enqueue',
-	'start',
-	'retry',
-	'success',
-	'failure',
-	'abort',
-	'drain',
-] = ['enqueue', 'start', 'retry', 'success', 'failure', 'abort', 'drain']
-
-// `createRecorders` reaches its event map only through the generic `on` of
-// `EventSourceInterface`, which yields no inference candidate, so its map type falls back to
-// the constraint and rejects a `WorkerEventMap` emitter. Each call therefore names both type
-// arguments, and this alias carries the recorded-name union so only the result type varies.
-type WorkerEvent = (typeof WORKER_EVENTS)[number]
-
 describe('Worker — emitter (push observation surface)', () => {
 	it('re-exposes the queue lifecycle: enqueue → start → success → drain with the job result', async () => {
 		const worker = new Worker<number, number, string>({
 			pool: { create: () => 7 },
 			handler: (input, resource) => `${input}:${resource}`,
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const events = createRecorders<WorkerEventMap<string>, WorkerEvent>(
 			worker.emitter,
 			WORKER_EVENTS,
@@ -1428,7 +1336,7 @@ describe('Worker — emitter (push observation surface)', () => {
 				throw error
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const events = createRecorders<WorkerEventMap<void>, WorkerEvent>(worker.emitter, WORKER_EVENTS)
 		await expect(worker.enqueue(undefined, { id: 'doomed' })).rejects.toThrow('always fails')
 		expect(events.start.calls).toEqual([['doomed']])
@@ -1448,7 +1356,7 @@ describe('Worker — emitter (push observation surface)', () => {
 					})
 				}),
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		const events = createRecorders<WorkerEventMap<void>, WorkerEvent>(worker.emitter, WORKER_EVENTS)
 		const running = worker.enqueue('inflight', { id: 'a' })
 		await waitForDelay(10)
@@ -1469,7 +1377,7 @@ describe('Worker — emitter (push observation surface)', () => {
 			handler: (input) => input + 1,
 			on: { success: success.handler },
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		await expect(worker.enqueue(41, { id: 'seed' })).resolves.toBe(42)
 		expect(success.calls).toEqual([['seed', 42]])
 	})
@@ -1489,7 +1397,7 @@ describe('Worker — emitter (push observation surface)', () => {
 				return input * 10
 			},
 		})
-		track(worker)
+		trackWorker(teardown, worker)
 		// A buggy `success` observer on the WORKER's emitter that throws every time. It must NOT
 		// corrupt the inner queue (the bridge listener never throws, so the queue's own emit stays
 		// balanced) or starve the pool — every job still runs against a pooled resource and settles.

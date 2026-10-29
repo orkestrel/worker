@@ -3,11 +3,11 @@
 // never in `setup.ts`.
 
 import type { NodeWorkerOptions } from '@src/server'
-import type { RecorderInterface } from '@orkestrel/test'
+import type { RecorderInterface, TeardownInterface } from '@orkestrel/test'
 import type { ScratchInterface } from '@orkestrel/test/server'
-import type { Worker as ThreadWorker } from 'node:worker_threads'
+import { Worker as ThreadWorker } from 'node:worker_threads'
 import { join } from 'node:path'
-import { isRecord } from '@orkestrel/contract'
+import { arrayOf, isNumber, isRecord } from '@orkestrel/contract'
 import { resolveRoot } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 
@@ -166,4 +166,63 @@ export class ThreadReply {
 		this.#thread.off('error', this.#failHandler)
 		this.#thread.off('exit', this.#exitHandler)
 	}
+}
+/** Represents the structured input accepted by the payload fixture. */
+export interface WorkerPayload {
+	readonly token: string
+}
+
+/** Represents a Node worker facade registered for unconditional cleanup. */
+export interface DisposableNodeWorker {
+	destroy(): Promise<void>
+}
+
+/** Narrows an even input for the raw thread guard proofs. */
+export function isEven(value: unknown): value is number {
+	return isNumber(value) && value % 2 === 0
+}
+
+/** Throws on the input value used to exercise guard failure containment. */
+export function isThrowingInput(value: unknown): value is number {
+	if (value === 1) throw new Error('input-guard-boom')
+	return isNumber(value)
+}
+
+/** Throws on the result value used to exercise guard failure containment. */
+export function isThrowingResult(value: unknown): value is number {
+	if (value === 2) throw new Error('result-guard-boom')
+	return isNumber(value)
+}
+
+/** Narrows the structured payload used by the cloning proof. */
+export function isWorkerPayload(value: unknown): value is WorkerPayload {
+	return isRecord(value) && typeof value.token === 'string'
+}
+
+/** Narrows the array returned by a real thread fixture. */
+export const isWorkerNumberArray = arrayOf(isNumber)
+
+/** Registers facade disposal even when a later assertion throws. */
+export function trackNodeWorker<T extends DisposableNodeWorker>(
+	teardown: TeardownInterface,
+	worker: T,
+): T {
+	teardown.add(() => worker.destroy())
+	return worker
+}
+
+/** Registers termination of a real worker thread. */
+export function trackFixtureThread(
+	teardown: TeardownInterface,
+	thread: ThreadWorker,
+): ThreadWorker {
+	teardown.add(async () => {
+		await thread.terminate()
+	})
+	return thread
+}
+
+/** Spawns and registers a worker fixture entry. */
+export function spawnFixtureThread(teardown: TeardownInterface, name: string): ThreadWorker {
+	return trackFixtureThread(teardown, new ThreadWorker(buildFixtureURL(name)))
 }

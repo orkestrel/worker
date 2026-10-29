@@ -1,10 +1,10 @@
 import type { ServeWorkerOptions } from './types.js'
+import { attempt } from '@orkestrel/contract'
 import { parentPort } from 'node:worker_threads'
 
 // The worker-side request handler. It is self-contained by necessity: this module loads as
-// raw `.ts` inside a spawned thread (Node ≥ 23.6 type-stripping), so it imports only
-// `node:worker_threads` at runtime — no `@src/*`, no `.js`-relative value imports (the
-// only non-node import is the type-only `ServeWorkerOptions`, fully erased at runtime).
+// raw `.ts` inside a spawned thread (Node ≥ 23.6 type-stripping), so runtime imports
+// use installed packages and Node modules, never `@src/*` or `.js`-relative source paths.
 // The inbound envelope is therefore narrowed inline rather than through a sibling guard in
 // `helpers.ts`, which would be a runtime import this module cannot make. A worker script
 // that needs the cloned `workerData` reads it directly from `node:worker_threads` (it is in
@@ -29,6 +29,8 @@ import { parentPort } from 'node:worker_threads'
  * side also terminates the thread, so a handler that ignores its signal is still stopped).
  * Every inbound message is narrowed with the inlined guards — no `as`. On the main thread
  * (`parentPort === null`) it is a no-op.
+ * Each in-flight run adds a port listener. Posting more concurrent runs to one thread than
+ * Node's per-event warning threshold can produce a possible-leak warning.
  *
  * @typeParam TInput - The work payload (inferred from `options.input`)
  * @typeParam TResult - The value the handler resolves (the reply payload)
@@ -50,37 +52,28 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 	if (port === null) return
 	const input = options.input
 	const handler = options.handler
-	const controllers = new Map<string, AbortController>()
 	port.on('message', (raw: unknown) => {
 		// Read the envelope's `command`, `id`, `job`, and `input` fields once, defensively. A
 		// hostile message can be a revoked
 		// proxy or carry a throwing getter, so every property access sits inside this one guard:
 		// a read that throws leaves the envelope unrecognised and the message is dropped without
 		// a reply, exactly as a malformed envelope is.
-		let command: unknown
-		let correlation: unknown
-		let job: unknown
-		let payload: unknown
-		let carried = false
-		try {
+		const envelope = attempt(() => {
 			if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
-				if ('command' in raw) command = raw.command
-				if ('id' in raw) correlation = raw.id
-				if ('job' in raw) job = raw.job
-				if ('input' in raw) {
-					payload = raw.input
-					carried = true
-				}
+				const command = 'command' in raw ? raw.command : undefined
+				const correlation = 'id' in raw ? raw.id : undefined
+				const job = 'job' in raw ? raw.job : undefined
+				const carried = 'input' in raw
+				const payload = carried ? raw.input : undefined
+				return { command, correlation, job, carried, payload }
 			}
-		} catch {
-			return
-		}
+			return undefined
+		})
+		if (!envelope.success || envelope.value === undefined) return
+		const { command, correlation, job, carried, payload } = envelope.value
 		if (typeof correlation !== 'string') return
 		const id = correlation
-		if (command === 'abort') {
-			controllers.get(id)?.abort()
-			return
-		}
+		if (command === 'abort') return
 		// A `run` envelope carries both ids: `id` is the per-dispatch correlation, `job` the
 		// stable Queue entry id handed to the handler. A malformed envelope
 		// without a string `job`, or without an `input` at all, fails closed with no reply.
@@ -88,7 +81,29 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 		const entry = job
 		const value = payload
 		const controller = new AbortController()
-		controllers.set(id, controller)
+		const settled = new AbortController()
+		port.addEventListener(
+			'message',
+			(event) => {
+				const notification = attempt(() => {
+					const message: unknown = event.data
+					if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+						return undefined
+					}
+					const action = 'command' in message ? message.command : undefined
+					const target = 'id' in message ? message.id : undefined
+					return { command: action, correlation: target }
+				})
+				if (
+					notification.success &&
+					notification.value?.command === 'abort' &&
+					notification.value.correlation === id
+				) {
+					controller.abort()
+				}
+			},
+			{ signal: settled.signal },
+		)
 		void Promise.resolve()
 			.then(() => {
 				if (!input(value)) {
@@ -97,15 +112,13 @@ export function serveWorker<TInput, TResult>(options: ServeWorkerOptions<TInput,
 				return handler(value, { id: entry, signal: controller.signal })
 			})
 			.then((result) => {
-				controllers.delete(id)
+				settled.abort()
 				port.postMessage({ id, ok: true, value: result })
 			})
 			.catch((error: unknown) => {
-				controllers.delete(id)
-				let message = 'worker operation failed'
-				try {
-					message = error instanceof Error ? error.message : String(error)
-				} catch {}
+				settled.abort()
+				const description = attempt(() => (error instanceof Error ? error.message : String(error)))
+				const message = description.success ? description.value : 'worker operation failed'
 				try {
 					port.postMessage({ id, ok: false, error: message })
 				} catch {
