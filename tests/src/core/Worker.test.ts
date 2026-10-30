@@ -446,6 +446,7 @@ describe('Worker constructor option boundaries', () => {
 		const listenerFailure = new Error('pool listener failed')
 		const watched = createRecorder<[number, AbortSignal]>()
 		const laterWatched = createRecorder<[number]>()
+		const warmed = Promise.withResolvers<void>()
 		const pool = new PoolOptionsProbe(
 			{
 				max: 1,
@@ -461,7 +462,10 @@ describe('Worker constructor option boundaries', () => {
 						throw listenerFailure
 					},
 					acquire: () => events.handler('acquire'),
-					release: () => events.handler('release'),
+					release: () => {
+						events.handler('release')
+						warmed.resolve()
+					},
 					destroy: () => events.handler('destroy'),
 				},
 				error: errors.handler,
@@ -503,6 +507,8 @@ describe('Worker constructor option boundaries', () => {
 			},
 		})
 
+		// The warm-up record's idle release precedes the first acquire only once the pool reports it.
+		await warmed.promise
 		await expect(worker.enqueue(1)).resolves.toBe(8)
 		await expect(worker.enqueue(2)).resolves.toBe(9)
 		await expect(worker.destroy()).resolves.toBeUndefined()
