@@ -46,7 +46,7 @@ The package publishes these factories. `createWorker` is the `@orkestrel/worker`
 `createJSONQueueStore`, `createNodeWorker`, and `serveWorker` are the
 `@orkestrel/worker/server` exports.
 
-| API                    | Kind     | Summary                                                                                                                                                                                                                                               |
+| Name                   | Kind     | Summary                                                                                                                                                                                                                                               |
 | ---------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `createWorker`         | function | Creates a resource-backed job worker — a `Queue` (`@orkestrel/queue`) composed with a `Pool` (`@orkestrel/pool`), where each enqueued input runs through the handler against an automatically acquired pooled resource released when the job settles. |
 | `createJSONQueueStore` | function | Creates a persistent JSON-file `QueueStoreInterface` — the core `createDatabaseQueueStore` over a server `createJSONDriver`.                                                                                                                          |
@@ -79,7 +79,7 @@ try {
 
 The thread-level functions behind `createNodeWorker`:
 
-| API            | Kind     | Summary                                                                                 |
+| Name           | Kind     | Summary                                                                                 |
 | -------------- | -------- | --------------------------------------------------------------------------------------- |
 | `createThread` | function | Creates one live worker thread and resolves it as a `NodeThread` after it comes online. |
 | `isReply`      | function | Narrows an inbound `message` to a `Reply` for a given correlation `id` — no assertion.  |
@@ -88,7 +88,7 @@ The thread-level functions behind `createNodeWorker`:
 
 The classes the core and server faces export:
 
-| API        | Kind  | Summary                                                                                                                                                           |
+| Name       | Kind  | Summary                                                                                                                                                           |
 | ---------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Dispatch` | class | Represents one dispatched worker-thread job — the lifecycle entity behind a job posted to a leased `NodeThread`, whose `promise` settles with the narrowed reply. |
 | `Worker`   | class | Represents a resource-backed job worker — a thin facade composing a `Queue` (`@orkestrel/queue`) with a `Pool` (`@orkestrel/pool`).                               |
@@ -99,7 +99,7 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 
 Each type and interface the core and server faces publish:
 
-| Type                 | Kind      | Shape                                                                                                                  | Summary                                                                                                                                                                                               |
+| Name                 | Kind      | Shape                                                                                                                  | Summary                                                                                                                                                                                               |
 | -------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WorkerHandler`      | type      | `(input: TInput, resource: TResource, context: QueueContext) => Promise<TResult> \| TResult`                           | Runs one worker job with a leased pool resource.                                                                                                                                                      |
 | `WorkerOptions`      | interface | `{ on?, error?, handler, pool, concurrency?, retries?, timeout?, store? }`                                             | Configures `createWorker`.                                                                                                                                                                            |
