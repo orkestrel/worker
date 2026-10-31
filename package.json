@@ -83,18 +83,18 @@
 		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.20",
-		"@orkestrel/database": "^0.0.19",
-		"@orkestrel/emitter": "^0.0.13",
-		"@orkestrel/pool": "^0.0.18",
-		"@orkestrel/queue": "^0.0.18"
+		"@orkestrel/contract": "^0.0.21",
+		"@orkestrel/database": "^0.0.20",
+		"@orkestrel/emitter": "^0.0.14",
+		"@orkestrel/pool": "^0.0.19",
+		"@orkestrel/queue": "^0.0.19"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.60.1",
-		"@orkestrel/guide": "^0.0.28",
+		"@orkestrel/guide": "^0.0.29",
 		"@orkestrel/probe": "^0.0.26",
-		"@orkestrel/scaffold": "^0.0.118",
-		"@orkestrel/test": "^0.0.31",
+		"@orkestrel/scaffold": "^0.0.120",
+		"@orkestrel/test": "^0.0.32",
 		"@types/node": "^26.6.6",
 		"oxfmt": "^0.75.0",
 		"oxlint": "^1.90.0",
