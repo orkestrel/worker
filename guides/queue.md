@@ -68,8 +68,6 @@ const status = await queue.enqueue('https://example.com')
 
 ### Types
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
-
 | Name                  | Kind      | Signature                                                                                                                                                                                                                                                                                                                                 | Summary                                                                                                                                                                                             |
 | --------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `QueueContext`        | interface | `{ id, signal }`                                                                                                                                                                                                                                                                                                                          | Represents the per-attempt context a queue handler receives.                                                                                                                                        |
@@ -86,8 +84,6 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 | `QueueStoreInterface` | interface | `{ save(), remove(), load(), clear() }`                                                                                                                                                                                                                                                                                                   | Represents the durable backing for a queue's outstanding entries — the small keyed surface a restart resumes from.                                                                                  |
 
 ### Guards
-
-In a guard table a `Shape` cell holds the type the guard narrows to.
 
 | Name                 | Kind     | Signature                                           | Summary                                                                                                                                           |
 | -------------------- | -------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |

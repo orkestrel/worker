@@ -52,8 +52,6 @@ try {
 
 ### Guards
 
-In a guard table a `Shape` cell holds the type the guard narrows to.
-
 | Name           | Kind     | Signature                                  | Summary                                                                                                          |
 | -------------- | -------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `isPoolError`  | function | `(value: unknown) => value is PoolError`   | Tests whether an unknown value is a branded `PoolError` with declared code and context.                          |
@@ -61,8 +59,6 @@ In a guard table a `Shape` cell holds the type the guard narrows to.
 | `isPoolSignal` | function | `(value: unknown) => value is AbortSignal` | Tests whether a value is a native `AbortSignal` for the acquire boundary, returning `false` for hostile proxies. |
 
 ### Types
-
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
 
 | Name               | Kind      | Signature                                                                                                                        | Summary                                                                                                                                                                            |
 | ------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
