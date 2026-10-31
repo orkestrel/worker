@@ -95,8 +95,6 @@ The classes the core and server faces export:
 
 ### Types
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
-
 Each type and interface the core and server faces publish:
 
 | Name                 | Kind      | Signature                                                                                                                                      | Summary                                                                                                                                                                                               |
