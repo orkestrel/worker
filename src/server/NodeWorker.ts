@@ -1,11 +1,15 @@
 import type { EmitterErrorHandler, EmitterHooks } from '@orkestrel/emitter'
-import type { WorkerEventMap, WorkerInterface } from '@src/core'
 import type { Guard } from '@orkestrel/contract'
-import type { QueueContext, QueueStoreInterface } from '@orkestrel/queue'
+import type {
+	QueueContext,
+	QueueEventMap,
+	QueueInterface,
+	QueueStoreInterface,
+} from '@orkestrel/queue'
 import type { NodeThread, NodeWorkerOptions } from './types.js'
 import { createWorker } from '@src/core'
 import { attempt } from '@orkestrel/contract'
-import { Dispatch } from './Dispatch.js'
+import { Job } from './Job.js'
 import { Thread } from './Thread.js'
 
 /**
@@ -13,10 +17,10 @@ import { Thread } from './Thread.js'
  *
  * @remarks
  * Supplies bound Pool and Queue operations without nested function assignments. The resulting
- * public entity is the plain core {@link WorkerInterface}.
+ * public entity is the plain core {@link QueueInterface}.
  */
 export class NodeWorker<TInput, TResult> {
-	readonly #on: EmitterHooks<WorkerEventMap<TResult>> | undefined
+	readonly #on: EmitterHooks<QueueEventMap<TResult>> | undefined
 	readonly #error: EmitterErrorHandler | undefined
 	readonly #script: string | URL
 	readonly #input: Guard<TInput>
@@ -40,7 +44,7 @@ export class NodeWorker<TInput, TResult> {
 		this.#store = options.store
 	}
 
-	build(): WorkerInterface<TInput, TResult> {
+	build(): QueueInterface<TInput, TResult> {
 		return createWorker<TInput, NodeThread, TResult>({
 			pool: {
 				create: this.#create.bind(this),
@@ -76,6 +80,6 @@ export class NodeWorker<TInput, TResult> {
 		if (!outcome.value) {
 			return Promise.reject(new Error('input did not satisfy input guard'))
 		}
-		return new Dispatch(thread, input, context, this.#result).promise
+		return new Job(thread, input, context, this.#result).promise
 	}
 }

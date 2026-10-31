@@ -1,6 +1,5 @@
-import type { WorkerInterface } from '@src/core'
 import type { ContractShape, Infer } from '@orkestrel/contract'
-import type { QueueStoreInterface } from '@orkestrel/queue'
+import type { QueueInterface, QueueStoreInterface } from '@orkestrel/queue'
 import type { NodeThread, NodeWorkerOptions } from './types.js'
 import { createJSONDriver } from '@orkestrel/database/server'
 import { createDatabaseQueueStore } from '@orkestrel/queue'
@@ -17,12 +16,12 @@ import { Thread } from './Thread.js'
  * that arrives before `online`, so the spawn promise is total — it can never dangle on a
  * thread that died without erroring). The returned entity attaches persistent `error` /
  * `exit` listeners that flip `alive` to `false` and latch the first terminal event on
- * {@link NodeThread.death}: a crash is observable to an in-flight {@link Dispatch} (through
+ * {@link NodeThread.death}: a crash is observable to an in-flight {@link Job} (through
  * its own listeners), to a pool's `validate` (through `alive`), and — crucially — to a
  * dispatch that attaches only after the death (through the latch). A `messageerror` is terminal
  * too, so a thread whose inbound payload could not be deserialized is never reused. The latch
  * closes a real race: a thread can become terminal before the readiness promise continuation
- * hands it to a {@link Dispatch}, leaving no future death event for that dispatch to observe.
+ * hands it to a {@link Job}, leaving no future death event for that dispatch to observe.
  * Without the latch, that job would wait forever. {@link createNodeWorker} spawns its pooled
  * threads the same way; reach for this to drive one thread yourself.
  *
@@ -90,21 +89,21 @@ export function createJSONQueueStore<TInput extends ContractShape>(
  * {@link createThread} publishes), `destroy`s it with `terminate()`, and `validate`s it by
  * `alive && threadId > 0` (so an evicted / crashed thread is dropped and replaced) — and an
  * internal handler that narrows the input through `options.input` (fail-fast before the
- * structured-clone boundary) then runs a {@link Dispatch} against the leased thread,
+ * structured-clone boundary) then runs a {@link Job} against the leased thread,
  * narrowing the reply through
  * `options.result`. `TInput` and `TResult` infer from the `input` and `result` guards, so
  * call sites need no explicit type arguments. The boundary is crossed with no `as`: the
  * guards reconstruct `TInput` / `TResult` by validation. An `abort` / `timeout`
  * terminates the in-flight thread (CPU-bound work can't honour a signal) and evicts it; a
  * subsequent job spawns a fresh thread. The worker script's module must call
- * `serveWorker`. Returns the plain {@link WorkerInterface} — its methods are the Worker's.
+ * `serveWorker`. Returns the plain {@link QueueInterface} — its methods are the Worker's.
  *
  * @typeParam TInput - The work payload each job carries (inferred from `input`)
  * @typeParam TResult - The value a thread resolves for a job (inferred from `result`)
  * @param options - The `script` plus the `input` / `result` guards and optional
  *   `on` / `error` / `workerData` / `concurrency` / `retries` / `timeout` / `store`
  *   (see {@link NodeWorkerOptions})
- * @returns A working {@link WorkerInterface} backed by a thread pool
+ * @returns A working {@link QueueInterface} backed by a thread pool
  *
  * @example
  * ```ts
@@ -123,6 +122,6 @@ export function createJSONQueueStore<TInput extends ContractShape>(
  */
 export function createNodeWorker<TInput, TResult>(
 	options: NodeWorkerOptions<TInput, TResult>,
-): WorkerInterface<TInput, TResult> {
+): QueueInterface<TInput, TResult> {
 	return new NodeWorker(options).build()
 }

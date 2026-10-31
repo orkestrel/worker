@@ -1,7 +1,6 @@
 import type { EmitterErrorHandler, EmitterHooks } from '@orkestrel/emitter'
 import type { Guard } from '@orkestrel/contract'
-import type { QueueContext, QueueStoreInterface } from '@orkestrel/queue'
-import type { WorkerEventMap } from '@src/core'
+import type { QueueContext, QueueEventMap, QueueStoreInterface } from '@orkestrel/queue'
 import type { Worker as ThreadWorker } from 'node:worker_threads'
 
 /**
@@ -31,7 +30,7 @@ export type Reply =
  * `alive && worker.threadId > 0`, so a
  * dead thread is destroyed and replaced rather than reused. `death` latches the first
  * terminal event (`error` / `messageerror`, or a synthesized error on `exit`) — the death-signal
- * record a {@link Dispatch} checks at construction, so a job dispatched after the thread died (its
+ * record a {@link Job} checks at construction, so a job dispatched after the thread died (its
  * death events already fired and will never fire again) rejects immediately instead of
  * awaiting events that already happened. A thread can become terminal before the readiness
  * promise continuation attaches dispatch listeners; the latch is what makes that ordering
@@ -74,7 +73,7 @@ export interface NodeThread {
  * - `store` — durable backing for outstanding jobs (survives a restart; `restore()`
  *   re-runs them).
  * - `on` — the reserved {@link EmitterHooks} key: initial listeners for the worker's
- *   {@link WorkerEventMap} (the job lifecycle it surfaces from its underlying queue), wired
+ *   {@link QueueEventMap} (the job lifecycle it surfaces from its underlying queue), wired
  *   at construction. A thread worker takes the same hooks as the core worker.
  * - `error` — the emitter's listener-error handler; a listener throw routes
  *   here, not to a domain event.
@@ -83,7 +82,7 @@ export interface NodeThread {
  * @typeParam TResult - The value a thread resolves for a job (inferred from `result`)
  */
 export interface NodeWorkerOptions<TInput, TResult> {
-	readonly on?: EmitterHooks<WorkerEventMap<TResult>>
+	readonly on?: EmitterHooks<QueueEventMap<TResult>>
 	readonly error?: EmitterErrorHandler
 	readonly script: string | URL
 	readonly input: Guard<TInput>

@@ -1,6 +1,11 @@
 import type { EmitterInterface } from '@orkestrel/emitter'
-import type { QueueContext, QueueEntryOptions } from '@orkestrel/queue'
-import type { WorkerEventMap, WorkerHandler, WorkerInterface, WorkerOptions } from './types.js'
+import type {
+	QueueContext,
+	QueueEntryOptions,
+	QueueEventMap,
+	QueueInterface,
+} from '@orkestrel/queue'
+import type { WorkerHandler, WorkerOptions } from './types.js'
 import { Emitter } from '@orkestrel/emitter'
 import { Pool } from '@orkestrel/pool'
 import { Queue } from '@orkestrel/queue'
@@ -38,7 +43,7 @@ import { Queue } from '@orkestrel/queue'
  * - **Durability.** An optional `store` is passed straight through to the queue, so the
  *   worker's outstanding jobs persist; `restore` re-runs them (delegated to the queue).
  * - **Observable (see the guide's `## Observing` section).** The owned {@link emitter}
- *   ({@link WorkerEventMap}) re-exposes the underlying queue's job lifecycle (`enqueue` /
+ *   ({@link QueueEventMap}) re-exposes the underlying queue's job lifecycle (`enqueue` /
  *   `start` / `retry` / `success` / `failure` / `abort` / `drain`) as the worker's own events —
  *   bridged from the inner queue's emitter at construction — so a consumer observes the worker
  *   without reaching through to internals. The bridge re-emits directly on the worker's own
@@ -48,13 +53,13 @@ import { Queue } from '@orkestrel/queue'
  *   pool's create / acquire / release events stay the pool's internal concern (a Worker manages
  *   its own resources); observe a `Pool` directly for those.
  */
-export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInput, TResult> {
+export class Worker<TInput, TResource, TResult> implements QueueInterface<TInput, TResult> {
 	readonly #queue: Queue<TInput, TResult>
 	readonly #pool: Pool<TResource>
 	// The push observation surface (see the guide's `## Observing` section) — the worker's own
 	// emitter, fed by the queue→worker bridge. The emitter isolates a worker observer's throw
 	// (routing it to the `error` handler), so it never escapes into queue or pool.
-	readonly #emitter: Emitter<WorkerEventMap<TResult>>
+	readonly #emitter: Emitter<QueueEventMap<TResult>>
 	readonly #handler: WorkerHandler<TInput, TResource, TResult>
 	#ending: PromiseWithResolvers<void> | undefined
 
@@ -70,7 +75,7 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		} = options
 		const concurrency = capturedConcurrency === undefined ? 1 : capturedConcurrency
 		this.#handler = handler
-		this.#emitter = new Emitter<WorkerEventMap<TResult>>({
+		this.#emitter = new Emitter<QueueEventMap<TResult>>({
 			...(on !== undefined ? { on } : {}),
 			...(error !== undefined ? { error } : {}),
 		})
@@ -109,7 +114,7 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		void this.#pool.start().catch(() => {})
 	}
 
-	get emitter(): EmitterInterface<WorkerEventMap<TResult>> {
+	get emitter(): EmitterInterface<QueueEventMap<TResult>> {
 		return this.#emitter
 	}
 
@@ -129,38 +134,66 @@ export class Worker<TInput, TResource, TResult> implements WorkerInterface<TInpu
 		return this.#queue.stopped
 	}
 
+	/**
+	 * Submits one job in FIFO order; the handler runs against an acquired resource, released
+	 * when the job settles.
+	 *
+	 * @param input - The work payload the handler receives
+	 * @param options - Optional id, retry and timeout overrides, and an entry abort signal
+	 * @returns The job's settle-once execution promise
+	 */
 	enqueue(input: TInput, options?: QueueEntryOptions): Promise<TResult> {
 		return this.#queue.enqueue(input, options)
 	}
 
+	/** Re-enqueues the store's outstanding entries through the underlying queue; no-op without a store. */
 	restore(): Promise<void> {
 		return this.#queue.restore()
 	}
 
+	/** Starts or restarts the underlying queue's worker loops. */
 	start(): void {
 		this.#queue.start()
 	}
 
+	/** Stops the queue, rejects pending work, and awaits current-loop and durable cleanup quiescence. */
 	stop(): Promise<void> {
 		return this.#queue.stop()
 	}
 
+	/** Suspends dequeuing through the underlying queue, leaving in-flight jobs untouched. */
 	pause(): void {
 		this.#queue.pause()
 	}
 
+	/** Continues a paused worker through the underlying queue. */
 	resume(): void {
 		this.#queue.resume()
 	}
 
+	/**
+	 * Cancels in-flight work, rejects pending work, and awaits queue-owned cleanup; an
+	 * aborted attempt is never retried.
+	 *
+	 * @param reason - Optional cause retained by the queue's coded abort error
+	 * @returns The underlying queue's stable abort barrier
+	 */
 	abort(reason?: unknown): Promise<void> {
 		return this.#queue.abort(reason)
 	}
 
+	/** Drops pending jobs and awaits their durable cleanup, leaving in-flight jobs untouched. */
 	clear(): Promise<void> {
 		return this.#queue.clear()
 	}
 
+	/**
+	 * Tears down the queue, then the pool, and finally the worker emitter, behind one stable
+	 * barrier.
+	 *
+	 * @returns One stable barrier shared by every call; it rejects with the original sole
+	 *   cleanup failure or an ordered `AggregateError` when both queue and pool fail
+	 */
 	destroy(): Promise<void> {
 		if (this.#ending !== undefined) return this.#ending.promise
 		const ending = Promise.withResolvers<void>()

@@ -1,45 +1,6 @@
-import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '@orkestrel/emitter'
+import type { EmitterErrorHandler, EmitterHooks } from '@orkestrel/emitter'
 import type { PoolOptions } from '@orkestrel/pool'
-import type { QueueContext, QueueEntryOptions, QueueStoreInterface } from '@orkestrel/queue'
-
-/**
- * Represents the push observation surface of a {@link WorkerInterface} — the job
- * lifecycle a fire-and-forget observer subscribes to.
- *
- * @typeParam TResult - The value a job resolves (the `success` payload), mirroring the
- *   {@link WorkerInterface}'s own `TResult`.
- *
- * @remarks
- * A Worker is a `Queue`⨉`Pool` facade (both from their own `@orkestrel` packages); this
- * map re-exposes the queue lifecycle the worker surfaces (`enqueue` / `start` / `retry` /
- * `success` / `failure` / `abort` / `drain`) as the worker's own events — wired from the
- * underlying queue's emitter at construction, so a consumer never reaches through to the
- * internal `Queue` and a buggy observer is isolated exactly as on the queue (a throw
- * routes to the worker emitter's `error` handler). The
- * pool's create / acquire / release events stay the pool's internal concern (a Worker
- * manages its own resources); a consumer who wants them observes a `Pool` directly.
- *
- * Declared as a `type` alias (not `interface extends EventMap` — `EventMap` is a
- * `type` kind): a type-literal satisfies the `EventMap` constraint
- * (`Record<string, readonly unknown[]>`) structurally, whereas an interface lacks the
- * required index signature.
- */
-export type WorkerEventMap<TResult> = {
-	/** Fires when a job is accepted — its id (delegated from the underlying queue's `enqueue`). */
-	readonly enqueue: readonly [id: string]
-	/** Fires when a job's attempt begins running — its id. */
-	readonly start: readonly [id: string]
-	/** Fires when a failed job attempt is being retried — its id + the next (1-based) attempt index. */
-	readonly retry: readonly [id: string, attempt: number]
-	/** Fires when a job settles successfully — its id + the resolved result. */
-	readonly success: readonly [id: string, result: TResult]
-	/** Fires when a job settles with a terminal failure — its id + the error. */
-	readonly failure: readonly [id: string, error: unknown]
-	/** Fires when the worker is aborted — the queue's coded abort error retaining the caller reason. */
-	readonly abort: readonly [reason: unknown]
-	/** Fires when the worker goes idle — no pending jobs and none in flight. */
-	readonly drain: readonly []
-}
+import type { QueueContext, QueueEventMap, QueueStoreInterface } from '@orkestrel/queue'
 
 /** Runs one worker job with a leased pool resource. */
 export type WorkerHandler<TInput, TResource, TResult> = (
@@ -67,11 +28,11 @@ export type WorkerHandler<TInput, TResource, TResult> = (
  * - `store` — durable backing; outstanding entries survive a restart; call
  *   `restore()` to re-run them.
  * - `on` — the reserved {@link EmitterHooks} key: initial listeners for the worker's
- *   {@link WorkerEventMap} (the job lifecycle it surfaces from its underlying queue), wired
+ *   {@link QueueEventMap} (the job lifecycle it surfaces from its underlying queue), wired
  *   at construction.
  */
 export interface WorkerOptions<TInput, TResource, TResult> {
-	readonly on?: EmitterHooks<WorkerEventMap<TResult>>
+	readonly on?: EmitterHooks<QueueEventMap<TResult>>
 	/** Holds the emitter's listener-error handler; a listener throw routes here, not to a domain event. */
 	readonly error?: EmitterErrorHandler
 	readonly handler: WorkerHandler<TInput, TResource, TResult>
@@ -81,60 +42,4 @@ export interface WorkerOptions<TInput, TResource, TResult> {
 	/** Holds integer milliseconds in `0..2_147_483_647`; `0` disables the per-attempt deadline. */
 	readonly timeout?: number
 	readonly store?: QueueStoreInterface<TInput>
-}
-
-/**
- * Represents the job-worker contract a consumer holds — a `Queue` whose handler runs each
- * job against a pooled resource.
- *
- * @remarks
- * Exposes a typed {@link emitter} carrying the job lifecycle
- * ({@link WorkerEventMap}) — the underlying queue's moments re-exposed as the worker's own,
- * so a consumer never reaches through to internals. Emitting is observation-only: a buggy
- * observer is isolated exactly as on the queue (a throw routes to the emitter's `error`
- * handler, the `error` option).
- */
-export interface WorkerInterface<TInput, TResult> {
-	readonly emitter: EmitterInterface<WorkerEventMap<TResult>>
-	readonly count: number
-	readonly active: number
-	readonly paused: boolean
-	readonly stopped: boolean
-	/**
-	 * Submits one job in FIFO order; the handler runs against an acquired resource, released
-	 * when the job settles.
-	 *
-	 * @param input - The work payload the handler receives
-	 * @param options - Optional id, retry and timeout overrides, and an entry abort signal
-	 * @returns The job's settle-once execution promise
-	 */
-	enqueue(input: TInput, options?: QueueEntryOptions): Promise<TResult>
-	/** Re-enqueues the store's outstanding entries through the underlying queue; no-op without a store. */
-	restore(): Promise<void>
-	/** Starts or restarts the underlying queue's worker loops. */
-	start(): void
-	/** Stops the queue, rejects pending work, and awaits current-loop and durable cleanup quiescence. */
-	stop(): Promise<void>
-	/** Suspends dequeuing through the underlying queue, leaving in-flight jobs untouched. */
-	pause(): void
-	/** Continues a paused worker through the underlying queue. */
-	resume(): void
-	/**
-	 * Cancels in-flight work, rejects pending work, and awaits queue-owned cleanup; an
-	 * aborted attempt is never retried.
-	 *
-	 * @param reason - Optional cause retained by the queue's coded abort error
-	 * @returns The underlying queue's stable abort barrier
-	 */
-	abort(reason?: unknown): Promise<void>
-	/** Drops pending jobs and awaits their durable cleanup, leaving in-flight jobs untouched. */
-	clear(): Promise<void>
-	/**
-	 * Tears down the queue, then the pool, and finally the worker emitter, behind one stable
-	 * barrier.
-	 *
-	 * @returns One stable barrier shared by every call; it rejects with the original sole
-	 *   cleanup failure or an ordered `AggregateError` when both queue and pool fail
-	 */
-	destroy(): Promise<void>
 }

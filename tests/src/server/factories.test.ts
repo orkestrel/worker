@@ -1,5 +1,7 @@
+import type { EmitterHooks } from '@orkestrel/emitter'
+import type { QueueEventMap, QueueInterface } from '@orkestrel/queue'
 import type { NodeWorkerOptions } from '@src/server'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import {
 	integerShape,
 	isBoolean,
@@ -139,6 +141,10 @@ describe('createNodeWorker', () => {
 			input: isNumber,
 			result: isNumber,
 		})
+		expectTypeOf(worker).toEqualTypeOf<QueueInterface<number, number>>()
+		expectTypeOf<NodeWorkerOptions<number, number>['on']>().toEqualTypeOf<
+			EmitterHooks<QueueEventMap<number>> | undefined
+		>()
 		try {
 			await expect(worker.enqueue(21)).resolves.toBe(42)
 		} finally {

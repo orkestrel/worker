@@ -1,5 +1,7 @@
 import type { PoolOptions } from '@orkestrel/pool'
-import type { WorkerEventMap, WorkerOptions } from '@src/core'
+import type { EmitterHooks, EmitterInterface } from '@orkestrel/emitter'
+import type { QueueEventMap, QueueInterface } from '@orkestrel/queue'
+import type { WorkerOptions } from '@src/core'
 import type { WorkerEvent, WorkerPoolOptions } from '../../setup.js'
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { attempt, stringShape } from '@orkestrel/contract'
@@ -1300,7 +1302,7 @@ describe('Worker — destroy mid-flight tears down queue and pool together', () 
 
 // ── Emitter — the PUSH observation surface ───────────────────────────────────
 //
-// The Worker exposes a typed `emitter` (`WorkerEventMap<TResult>`) RE-EXPOSING the
+// The Worker exposes a typed `emitter` (`QueueEventMap<TResult>`) RE-EXPOSING the
 // underlying queue's job lifecycle — `enqueue` / `start` / `retry` / `success` / `failure` /
 // `abort` / `drain` — bridged from the inner queue at construction, so a consumer observes
 // the worker without reaching through to internals. The bridge re-emits directly on the
@@ -1318,7 +1320,7 @@ describe('Worker — emitter (push observation surface)', () => {
 			handler: (input, resource) => `${input}:${resource}`,
 		})
 		trackWorker(teardown, worker)
-		const events = createRecorders<WorkerEventMap<string>, WorkerEvent>(
+		const events = createRecorders<QueueEventMap<string>, WorkerEvent>(
 			worker.emitter,
 			WORKER_EVENTS,
 		)
@@ -1343,7 +1345,7 @@ describe('Worker — emitter (push observation surface)', () => {
 			},
 		})
 		trackWorker(teardown, worker)
-		const events = createRecorders<WorkerEventMap<void>, WorkerEvent>(worker.emitter, WORKER_EVENTS)
+		const events = createRecorders<QueueEventMap<void>, WorkerEvent>(worker.emitter, WORKER_EVENTS)
 		await expect(worker.enqueue(undefined, { id: 'doomed' })).rejects.toThrow('always fails')
 		expect(events.start.calls).toEqual([['doomed']])
 		expect(events.retry.calls).toEqual([['doomed', 1]])
@@ -1363,7 +1365,7 @@ describe('Worker — emitter (push observation surface)', () => {
 				}),
 		})
 		trackWorker(teardown, worker)
-		const events = createRecorders<WorkerEventMap<void>, WorkerEvent>(worker.emitter, WORKER_EVENTS)
+		const events = createRecorders<QueueEventMap<void>, WorkerEvent>(worker.emitter, WORKER_EVENTS)
 		const running = worker.enqueue('inflight', { id: 'a' })
 		await waitForDelay(10)
 		const reason = new Error('stop')
@@ -1428,5 +1430,22 @@ describe('Worker — emitter (push observation surface)', () => {
 		expect(errors.calls.every(([, event]) => event === 'success')).toBe(true)
 		// The worker still serves a fresh job after the storm.
 		await expect(worker.enqueue(99, { id: 'after' })).resolves.toBe(990)
+	})
+})
+
+describe('Worker — typed by the queue contract', () => {
+	it('implements QueueInterface and carries QueueEventMap on its emitter and its `on` hooks', async () => {
+		const worker = new Worker<number, number, string>({
+			pool: { create: () => 7 },
+			handler: (input, resource) => `${input}:${resource}`,
+		})
+		trackWorker(teardown, worker)
+		expectTypeOf(worker).toExtend<QueueInterface<number, string>>()
+		expectTypeOf(worker.emitter).toEqualTypeOf<EmitterInterface<QueueEventMap<string>>>()
+		expectTypeOf<WorkerOptions<number, number, string>['on']>().toEqualTypeOf<
+			EmitterHooks<QueueEventMap<string>> | undefined
+		>()
+		const queue: QueueInterface<number, string> = worker
+		await expect(queue.enqueue(3)).resolves.toBe('3:7')
 	})
 })

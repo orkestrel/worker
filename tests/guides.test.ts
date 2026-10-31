@@ -54,7 +54,7 @@ await new GuideCommand({
 	} = await import('@orkestrel/guide')
 	const { requireValue, waitForCondition } = await import('@orkestrel/test')
 	const { createWorker } = await import('@src/core')
-	const { createJSONQueueStore, createNodeWorker, createThread, Dispatch, isReply } =
+	const { createJSONQueueStore, createNodeWorker, createThread, Job, isReply } =
 		await import('@src/server')
 	const { buildFixtureURL, tempDatabasePath } = await import('./setupServer.js')
 	const { describe, expect, it } = await import('vitest')
@@ -234,7 +234,7 @@ await new GuideCommand({
 			const thread = await createThread(buildFixtureURL('double.ts'))
 			const controller = new AbortController()
 			try {
-				const job = new Dispatch(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
+				const job = new Job(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
 				expect(await job.promise).toBe(42)
 				expect(isReply({ id: 'reply-1', ok: true, value: 42 }, 'reply-1')).toBe(true)
 				expect(isReply({ id: 'reply-1', ok: true, value: 42 }, 'other')).toBe(false)

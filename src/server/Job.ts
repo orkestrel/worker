@@ -40,18 +40,18 @@ import { Thread } from './Thread.js'
  *
  * @example
  * ```ts
- * import { createThread, Dispatch } from '@orkestrel/worker/server'
+ * import { createThread, Job } from '@orkestrel/worker/server'
  *
  * const isNumber = (value: unknown): value is number => typeof value === 'number'
  *
  * const thread = await createThread(new URL('./double.js', import.meta.url))
  * const controller = new AbortController()
- * const job = new Dispatch(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
+ * const job = new Job(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
  * console.log(await job.promise) // 42
  * await thread.worker.terminate()
  * ```
  */
-export class Dispatch<TResult> {
+export class Job<TResult> {
 	readonly #thread: NodeThread
 	readonly #worker: ThreadWorker
 	readonly #input: unknown

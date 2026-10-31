@@ -1,4 +1,5 @@
-import type { WorkerInterface, WorkerOptions } from './types.js'
+import type { QueueInterface } from '@orkestrel/queue'
+import type { WorkerOptions } from './types.js'
 import { Worker } from './Worker.js'
 
 /**
@@ -22,7 +23,7 @@ import { Worker } from './Worker.js'
  * @typeParam TResult - The value the handler resolves for a job
  * @param options - The `handler` and `pool` plus the optional `concurrency`, `retries`,
  *   `timeout`, `store`, `on`, and `error` keys (see {@link WorkerOptions})
- * @returns A working {@link WorkerInterface}
+ * @returns A working {@link QueueInterface}
  *
  * @example A resource-backed worker
  * ```ts
@@ -43,6 +44,6 @@ import { Worker } from './Worker.js'
  */
 export function createWorker<TInput, TResource, TResult>(
 	options: WorkerOptions<TInput, TResource, TResult>,
-): WorkerInterface<TInput, TResult> {
+): QueueInterface<TInput, TResult> {
 	return new Worker(options)
 }

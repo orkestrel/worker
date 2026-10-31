@@ -4,7 +4,7 @@ import { attempt, isRecord, isString } from '@orkestrel/contract'
 // === The wire protocol (main ↔ thread)
 //
 // The reply half of the run/abort/reply protocol `serveWorker` answers — the leaf predicate
-// a `Dispatch` filters inbound messages with. The envelope types ({@link Reply},
+// a `Job` filters inbound messages with. The envelope types ({@link Reply},
 // `NodeThread`) live in `./types.js`; the public bridge across the
 // structured-clone boundary is the `input` / `result` `Guard`s, which narrow the envelopes'
 // opaque `unknown` payloads with no assertion. This file imports no

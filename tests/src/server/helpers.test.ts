@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { isBoolean, isNumber, isRecord, isString, numberShape, unionOf } from '@orkestrel/contract'
 import { MemoryQueueStore } from '@orkestrel/queue'
 import { fileURLToPath } from 'node:url'
-import { createNodeWorker, createThread, Dispatch, isReply } from '@src/server'
+import { createNodeWorker, createThread, Job, isReply } from '@src/server'
 import { createTeardown, waitForCondition } from '@orkestrel/test'
 import {
 	buildFixtureURL,
@@ -14,11 +14,11 @@ import {
 	trackNodeWorker,
 } from '../../setupServer.js'
 
-// src/server/helpers.ts — the `isReply` predicate a `Dispatch` filters inbound messages
+// src/server/helpers.ts — the `isReply` predicate a `Job` filters inbound messages
 // with, proven directly at the end of this file, plus the main-side worker-thread machinery
-// (`createThread` / `Dispatch`) it serves. The following round-trip suites drive
+// (`createThread` / `Job`) it serves. The following round-trip suites drive
 // `createNodeWorker` over REAL worker threads (no mocking; the node `src:server`
-// project), exercising `createThread` + `Dispatch` END TO END — each stands up a worker
+// project), exercising `createThread` + `Job` END TO END — each stands up a worker
 // against a real fixture script, drives
 // jobs, and tears it down in `afterEach` so no thread leaks and the process exits; the
 // fixtures are raw `.ts` loaded by Node's type-stripping; the server Vitest project supplies
@@ -220,7 +220,7 @@ describe('createNodeWorker — in-flight signal abort terminates + evicts the th
 		const leased = await worker.enqueue(0)
 		expect(leased).toBeGreaterThan(0)
 		// The fixture spins 2s ignoring its signal. A per-entry `signal` (distinct from the
-		// timeout path) aborts the attempt MID-FLIGHT: the `Dispatch`'s abort handler posts the
+		// timeout path) aborts the attempt MID-FLIGHT: the `Job`'s abort handler posts the
 		// abort, terminates the uncooperative thread, and flips `alive = false` so the pool
 		// evicts it.
 		const controller = new AbortController()
@@ -291,7 +291,7 @@ describe('createNodeWorker — a thread crash mid-flight evicts the thread', () 
 		)
 		// A NEGATIVE input makes the fixture `process.exit(1)` — the thread dies WITHOUT a
 		// reply, so `ThreadWorker` emits `'exit'`/`'error'` while the job is in flight and
-		// the `Dispatch`'s `onExit`/`onError` rejects it (not the normal `{ ok: false }` reply that
+		// the `Job`'s `onExit`/`onError` rejects it (not the normal `{ ok: false }` reply that
 		// `fail.ts` covers) and marks the thread dead.
 		await expect(worker.enqueue(-1)).rejects.toBeDefined()
 		// The dead thread is never reused; a non-negative input then doubles on a FRESH thread,
@@ -490,7 +490,7 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 	it('rejects the job cleanly when the worker script throws at module load', async () => {
 		// `load-throw.ts` throws while evaluating. The thread comes `'online'` (so the spawn
 		// resolves a live thread) then immediately `'error'`s / `'exit'`s — the death reaches the
-		// in-flight `Dispatch`, which rejects the job. No hang: the broken script settles the job.
+		// in-flight `Job`, which rejects the job. No hang: the broken script settles the job.
 		const worker = trackNodeWorker(
 			teardown,
 			createNodeWorker({
@@ -506,7 +506,7 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 		// A non-existent module: the thread bootstraps, fails to resolve the module, and dies the
 		// same way — the job rejects rather than hanging on a reply that never comes. This was the
 		// suite's one residual flake (a hang under full-suite load, NOT slow bootstrap): the death
-		// events could all fire before the `Dispatch` attached its listeners, losing the signal. The
+		// events could all fire before the `Job` attached its listeners, losing the signal. The
 		// `NodeThread.death` latch settles that ordering deterministically (the `latched-death path`
 		// suite pins the latch), so the spec runs at the default timeout again.
 		const worker = trackNodeWorker(
@@ -560,30 +560,26 @@ describe('createNodeWorker — a worker script that fails to load', () => {
 	})
 })
 
-describe('Dispatch — the latched-death path (post-death dispatch settles immediately)', () => {
+describe('Job — the latched-death path (post-death dispatch settles immediately)', () => {
 	it('rejects a dispatch onto a thread that already died, from the latched death', async () => {
 		const thread = await createThread(buildFixtureURL('double.ts'))
 		await thread.worker.terminate()
 		expect(thread.alive).toBe(false)
 		expect(thread.death).toBeDefined()
 		const controller = new AbortController()
-		const pending = new Dispatch(
-			thread,
-			1,
-			{ id: 'post-death', signal: controller.signal },
-			isNumber,
-		).promise
+		const pending = new Job(thread, 1, { id: 'post-death', signal: controller.signal }, isNumber)
+			.promise
 		await expect(pending).rejects.toBe(thread.death)
 	})
 })
 
-describe('Dispatch — exact terminal causes', () => {
+describe('Job — exact terminal causes', () => {
 	it('rejects with the exact caller abort reason object', async () => {
 		const thread = await createThread(buildFixtureURL('slow.ts'))
 		try {
 			const controller = new AbortController()
 			const reason = Object.freeze({ command: 'stop', source: 'caller' })
-			const pending = new Dispatch(
+			const pending = new Job(
 				thread,
 				5_000,
 				{ id: 'exact-abort', signal: controller.signal },
@@ -600,7 +596,7 @@ describe('Dispatch — exact terminal causes', () => {
 		const thread = await createThread(buildFixtureURL('crash.ts'))
 		try {
 			const controller = new AbortController()
-			const pending = new Dispatch(
+			const pending = new Job(
 				thread,
 				-1,
 				{ id: 'exact-crash', signal: controller.signal },
@@ -616,7 +612,7 @@ describe('Dispatch — exact terminal causes', () => {
 	})
 })
 
-describe('Dispatch — a consumer-supplied NodeThread owns its own liveness', () => {
+describe('Job — a consumer-supplied NodeThread owns its own liveness', () => {
 	it('rejects the aborted job and terminates the supplied worker, leaving `alive` untouched', async () => {
 		// A foreign `NodeThread`: a real `ThreadWorker` this package did not produce, wrapped in a
 		// plain object satisfying the published interface. The documented obligation on
@@ -628,7 +624,7 @@ describe('Dispatch — a consumer-supplied NodeThread owns its own liveness', ()
 		try {
 			const controller = new AbortController()
 			const reason = Object.freeze({ command: 'stop', source: 'foreign' })
-			const pending = new Dispatch(
+			const pending = new Job(
 				foreign,
 				5_000,
 				{ id: 'foreign-abort', signal: controller.signal },
@@ -646,13 +642,13 @@ describe('Dispatch — a consumer-supplied NodeThread owns its own liveness', ()
 	})
 })
 
-describe('Dispatch — messageerror listener lifecycle', () => {
+describe('Job — messageerror listener lifecycle', () => {
 	it('attaches one stable listener for the job and removes it on settlement', async () => {
 		const thread = await createThread(buildFixtureURL('double.ts'))
 		try {
 			const baseline = thread.worker.listenerCount('messageerror')
 			const controller = new AbortController()
-			const pending = new Dispatch(
+			const pending = new Job(
 				thread,
 				2,
 				{ id: 'listener-lifecycle', signal: controller.signal },
@@ -670,7 +666,7 @@ describe('Dispatch — messageerror listener lifecycle', () => {
 describe('createNodeWorker — protocol robustness (stray messages)', () => {
 	it('ignores stray / foreign-id messages and still resolves the correct reply', async () => {
 		// `stray.ts` posts a message with NO `id` and a well-formed reply for a DIFFERENT id BEFORE
-		// its real reply. The `Dispatch`'s `isReply` filter drops both (id mismatch), so the job still
+		// its real reply. The `Job`'s `isReply` filter drops both (id mismatch), so the job still
 		// resolves its own correct value — a thread that chatters on the channel can't corrupt a job.
 		const worker = trackNodeWorker(
 			teardown,
@@ -699,7 +695,7 @@ describe('createNodeWorker — protocol robustness (matching-id malformed reply)
 
 describe('createNodeWorker — an already-aborted enqueue signal', () => {
 	it('rejects without leaving the worker wedged (pre-flight abort short-circuit)', async () => {
-		// A signal already aborted when the job reaches its `Dispatch` hits the `signal.aborted` short
+		// A signal already aborted when its `Job` is constructed hits the `signal.aborted` short
 		// circuit: it posts the abort + evicts and rejects WITHOUT awaiting a reply. The worker is
 		// not wedged — a later un-aborted job on the same worker still succeeds.
 		const worker = trackNodeWorker(

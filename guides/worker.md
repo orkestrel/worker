@@ -46,12 +46,12 @@ The package publishes these factories. `createWorker` is the `@orkestrel/worker`
 `createJSONQueueStore`, `createNodeWorker`, and `serveWorker` are the
 `@orkestrel/worker/server` exports.
 
-| Name                   | Kind     | Signature                                                                                                              | Summary                                                                                                                                                                                                                                               |
-| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `createWorker`         | function | `<TInput, TResource, TResult>(options: WorkerOptions<TInput, TResource, TResult>) => WorkerInterface<TInput, TResult>` | Creates a resource-backed job worker — a `Queue` (`@orkestrel/queue`) composed with a `Pool` (`@orkestrel/pool`), where each enqueued input runs through the handler against an automatically acquired pooled resource released when the job settles. |
-| `createJSONQueueStore` | function | `<TInput extends ContractShape>(path: string, input: TInput) => QueueStoreInterface<Infer<TInput>>`                    | Creates a persistent JSON-file `QueueStoreInterface` — the core `createDatabaseQueueStore` over a server `createJSONDriver`.                                                                                                                          |
-| `createNodeWorker`     | function | `<TInput, TResult>(options: NodeWorkerOptions<TInput, TResult>) => WorkerInterface<TInput, TResult>`                   | Creates a CPU-parallel worker over `node:worker_threads` — a thin specialization of the core `createWorker` whose pooled resource is a worker thread.                                                                                                 |
-| `serveWorker`          | function | `<TInput, TResult>(options: ServeWorkerOptions<TInput, TResult>) => void`                                              | Registers a worker-thread handler — the worker-side half of `createNodeWorker`.                                                                                                                                                                       |
+| Name                   | Kind     | Signature                                                                                                             | Summary                                                                                                                                                                                                                                               |
+| ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createWorker`         | function | `<TInput, TResource, TResult>(options: WorkerOptions<TInput, TResource, TResult>) => QueueInterface<TInput, TResult>` | Creates a resource-backed job worker — a `Queue` (`@orkestrel/queue`) composed with a `Pool` (`@orkestrel/pool`), where each enqueued input runs through the handler against an automatically acquired pooled resource released when the job settles. |
+| `createJSONQueueStore` | function | `<TInput extends ContractShape>(path: string, input: TInput) => QueueStoreInterface<Infer<TInput>>`                   | Creates a persistent JSON-file `QueueStoreInterface` — the core `createDatabaseQueueStore` over a server `createJSONDriver`.                                                                                                                          |
+| `createNodeWorker`     | function | `<TInput, TResult>(options: NodeWorkerOptions<TInput, TResult>) => QueueInterface<TInput, TResult>`                   | Creates a CPU-parallel worker over `node:worker_threads` — a thin specialization of the core `createWorker` whose pooled resource is a worker thread.                                                                                                 |
+| `serveWorker`          | function | `<TInput, TResult>(options: ServeWorkerOptions<TInput, TResult>) => void`                                             | Registers a worker-thread handler — the worker-side half of `createNodeWorker`.                                                                                                                                                                       |
 
 ### Threads
 
@@ -61,14 +61,14 @@ these to drive one thread yourself; `createNodeWorker` is the entry point for po
 work. Driving a thread by hand:
 
 ```ts
-import { createThread, Dispatch, isReply } from '@orkestrel/worker/server'
+import { createThread, isReply, Job } from '@orkestrel/worker/server'
 
 const isNumber = (value: unknown): value is number => typeof value === 'number'
 
 const thread = await createThread(new URL('./double.ts', import.meta.url))
 const controller = new AbortController()
 try {
-	const job = new Dispatch(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
+	const job = new Job(thread, 21, { id: 'job-1', signal: controller.signal }, isNumber)
 	console.log(await job.promise) // 42
 	console.log(isReply({ id: 'reply-1', ok: true, value: 42 }, 'reply-1')) // true
 	console.log(isReply({ id: 'reply-1', ok: true, value: 42 }, 'other')) // false
@@ -88,10 +88,10 @@ The thread-level functions behind `createNodeWorker`:
 
 The classes the core and server faces export:
 
-| Name       | Kind  | Signature                                                                                                                  | Summary                                                                                                                                                           |
-| ---------- | ----- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Dispatch` | class | `new <TResult>(thread: NodeThread, input: unknown, context: QueueContext, result: Guard<TResult>) => Dispatch<TResult>`    | Represents one dispatched worker-thread job — the lifecycle entity behind a job posted to a leased `NodeThread`, whose `promise` settles with the narrowed reply. |
-| `Worker`   | class | `new <TInput, TResource, TResult>(options: WorkerOptions<TInput, TResource, TResult>) => WorkerInterface<TInput, TResult>` | Represents a resource-backed job worker — a thin facade composing a `Queue` (`@orkestrel/queue`) with a `Pool` (`@orkestrel/pool`).                               |
+| Name     | Kind  | Signature                                                                                                                 | Summary                                                                                                                                                           |
+| -------- | ----- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Job`    | class | `new <TResult>(thread: NodeThread, input: unknown, context: QueueContext, result: Guard<TResult>) => Job<TResult>`        | Represents one dispatched worker-thread job — the lifecycle entity behind a job posted to a leased `NodeThread`, whose `promise` settles with the narrowed reply. |
+| `Worker` | class | `new <TInput, TResource, TResult>(options: WorkerOptions<TInput, TResource, TResult>) => QueueInterface<TInput, TResult>` | Represents a resource-backed job worker — a thin facade composing a `Queue` (`@orkestrel/queue`) with a `Pool` (`@orkestrel/pool`).                               |
 
 ### Types
 
@@ -99,30 +99,29 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 
 Each type and interface the core and server faces publish:
 
-| Name                 | Kind      | Signature                                                                                                                                                                                                                                                                                                                                 | Summary                                                                                                                                                                                               |
-| -------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WorkerHandler`      | type      | `(input: TInput, resource: TResource, context: QueueContext) => Promise<TResult> \| TResult`                                                                                                                                                                                                                                              | Runs one worker job with a leased pool resource.                                                                                                                                                      |
-| `WorkerOptions`      | interface | `{ on?, error?, handler, pool, concurrency?, retries?, timeout?, store? }`                                                                                                                                                                                                                                                                | Configures `createWorker`.                                                                                                                                                                            |
-| `WorkerInterface`    | interface | `{ emitter, count, active, paused, stopped, enqueue(), restore(), start(), stop(), pause(), resume(), abort(), clear(), destroy() }`                                                                                                                                                                                                      | Represents the job-worker contract a consumer holds — a `Queue` whose handler runs each job against a pooled resource.                                                                                |
-| `WorkerEventMap`     | type      | `{ readonly enqueue: readonly [id: string]; readonly start: readonly [id: string]; readonly retry: readonly [id: string, attempt: number]; readonly success: readonly [id: string, result: TResult]; readonly failure: readonly [id: string, error: unknown]; readonly abort: readonly [reason: unknown]; readonly drain: readonly []; }` | Represents the push observation surface of a `WorkerInterface` — the job lifecycle a fire-and-forget observer subscribes to.                                                                          |
-| `NodeWorkerOptions`  | interface | `{ on?, error?, script, input, result, workerData?, concurrency?, retries?, timeout?, store? }`                                                                                                                                                                                                                                           | Configures `createNodeWorker` — a CPU-parallel worker over `node:worker_threads`.                                                                                                                     |
-| `ServeWorkerOptions` | interface | `{ input, handler }`                                                                                                                                                                                                                                                                                                                      | Configures `serveWorker` — the worker-side entry a thread script registers.                                                                                                                           |
-| `NodeThread`         | interface | `{ worker, alive, death }`                                                                                                                                                                                                                                                                                                                | Represents a live worker thread plus its latched liveness state — the pooled resource a `createNodeWorker` leases per job.                                                                            |
-| `Reply`              | type      | `{ readonly id: string; readonly ok: true; readonly value: unknown; } \| { readonly id: string; readonly ok: false; readonly error: string; }`                                                                                                                                                                                            | Represents a thread→main reply envelope — a success carrying an opaque `value`, or a failure with a message — the reply half of the wire protocol `createNodeWorker` posts and `serveWorker` answers. |
+| Name                 | Kind      | Signature                                                                                                                                      | Summary                                                                                                                                                                                               |
+| -------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WorkerHandler`      | type      | `(input: TInput, resource: TResource, context: QueueContext) => Promise<TResult> \| TResult`                                                   | Runs one worker job with a leased pool resource.                                                                                                                                                      |
+| `WorkerOptions`      | interface | `{ on?, error?, handler, pool, concurrency?, retries?, timeout?, store? }`                                                                     | Configures `createWorker`.                                                                                                                                                                            |
+| `NodeWorkerOptions`  | interface | `{ on?, error?, script, input, result, workerData?, concurrency?, retries?, timeout?, store? }`                                                | Configures `createNodeWorker` — a CPU-parallel worker over `node:worker_threads`.                                                                                                                     |
+| `ServeWorkerOptions` | interface | `{ input, handler }`                                                                                                                           | Configures `serveWorker` — the worker-side entry a thread script registers.                                                                                                                           |
+| `NodeThread`         | interface | `{ worker, alive, death }`                                                                                                                     | Represents a live worker thread plus its latched liveness state — the pooled resource a `createNodeWorker` leases per job.                                                                            |
+| `Reply`              | type      | `{ readonly id: string; readonly ok: true; readonly value: unknown; } \| { readonly id: string; readonly ok: false; readonly error: string; }` | Represents a thread→main reply envelope — a success carrying an opaque `value`, or a failure with a message — the reply half of the wire protocol `createNodeWorker` posts and `serveWorker` answers. |
 
-The `emitter` / `count` / `active` / `paused` / `stopped` members of `WorkerInterface` are
-`readonly` data members (Surface rows, earlier) — `emitter` is the typed push observation
-surface (see [Observing](#observing)); the call-signature methods are documented under
-[Methods](#methods). `Queue` / `Pool` themselves — and their own options, event maps, and
-stores — are documented in their own packages: [queue.md](queue.md) / [pool.md](pool.md).
+`Worker` implements `@orkestrel/queue`'s `QueueInterface`, and `createWorker` and
+`createNodeWorker` return that interface. Its `emitter` / `count` / `active` / `paused` / `stopped`
+members are `readonly` data members: `emitter` is the typed push observation surface
+carrying the queue's `QueueEventMap` (see [Observing](#observing)), and the call-signature
+methods are documented under [Methods](#methods). `Queue` / `Pool` themselves — and their
+own options, event maps, and stores — are documented in their own packages:
+[queue.md](queue.md) / [pool.md](pool.md).
 
 ## Methods
 
-The public methods of `WorkerInterface` — every call-signature member listed (its
-`readonly` data members stay Surface rows). `Worker` implements `WorkerInterface`
-exactly, so this doubles as the class's instance-method surface.
+The public methods of `Worker` — every call-signature member of `QueueInterface` it
+implements, with no method beyond them.
 
-#### `WorkerInterface`
+#### `Worker`
 
 | Method    | Returns            | Summary                                                                                                            |
 | --------- | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
@@ -177,7 +176,7 @@ These invariants hold across `src/core` ↔ `worker.md`:
    settlement serially, aggregates the queue's failure and the pool's in that order, and
    destroys the worker emitter last.
 3. **Observable — the queue lifecycle re-exposed.** The `Worker` owns a typed `Emitter`
-   exposed as `readonly emitter` carrying `WorkerEventMap<TResult>`
+   exposed as `readonly emitter` carrying `QueueEventMap<TResult>`
    (`enqueue` / `start` / `retry` / `success` / `failure` / `abort` / `drain`), bridged
    from the underlying queue's own emitter at construction — each bridge listener
    re-emits directly on the worker's emitter and never throws, so the inner queue's own
@@ -188,16 +187,16 @@ These invariants hold across `src/core` ↔ `worker.md`:
    own `create` / `acquire` / `release` / `destroy` events stay the pool's internal
    concern — observe a `Pool` directly for those.
 4. **Doc ↔ source method bijection.** The `## Methods` table lists exactly the public
-   methods of `WorkerInterface` — exhaustive, both directions — and `Worker` exposes
-   the same public methods as its interface, no more.
+   methods of `Worker` — exhaustive, both directions — and they are the methods of the
+   `QueueInterface` it implements, no more.
 5. **`createNodeWorker` is a thread specialization of `createWorker` (`@orkestrel/worker/server`).**
    It does not reimplement concurrency / retry / timeout / lifecycle — it calls
    `createWorker` with a `Pool` whose resource is a `node:worker_threads` thread
    (`create` = the spawn `createThread` publishes, `destroy` = `terminate()`,
    `validate` = `alive && threadId > 0`) and an internal handler that narrows the input
-   through `options.input` then runs a `Dispatch` against the leased thread. `TInput` and
+   through `options.input` then runs a `Job` against the leased thread. `TInput` and
    `TResult` infer from the `input` and `result` guards, so a call site needs no type
-   argument. The structured-clone boundary is crossed with no `as`: a `Dispatch` narrows each reply
+   argument. The structured-clone boundary is crossed with no `as`: a `Job` narrows each reply
    value through `options.result` (a value that fails it rejects with `'reply did not
    satisfy result guard'`), and the worker side narrows each payload through
    `options.input` (a bad input replies `'input did not satisfy input guard'`) —
@@ -223,15 +222,15 @@ These invariants hold across `src/core` ↔ `worker.md`:
 7. **A thread death settles its job under every event ordering — the `death` latch.**
    Every spawned thread carries persistent `error` / `messageerror` / `exit` listeners that
    flip `alive = false`
-   and latch the first terminal event on `NodeThread.death`; a `Dispatch` checks that latch
+   and latch the first terminal event on `NodeThread.death`; a `Job` checks that latch
    synchronously at construction, so a job dispatched onto a thread that already died rejects
    immediately. A thread can become terminal before the readiness promise continuation
-   attaches dispatch listeners, and those events will never fire again; without the latch
-   the job would wait forever. A death mid-flight still rejects through the dispatch's own
+   attaches `Job` listeners, and those events will never fire again; without the latch
+   the job would wait forever. A death mid-flight still rejects through the `Job`'s own
    `error` / `exit` listeners; exit rejects with that exact already-latched `death` object,
    whose message retains the exit code (for example, `worker thread exited (code 1)`). An
    inbound `messageerror` also evicts and terminates the thread, rejects the
-   dispatch, and is detached with the other per-job listeners. A death before `online`
+   job, and is detached with the other per-job listeners. A death before `online`
    rejects the spawn itself.
 8. **`serveWorker` captures registration options once.** After the main-thread
    `parentPort === null` no-op, registration reads `options.input` and then
@@ -240,9 +239,9 @@ These invariants hold across `src/core` ↔ `worker.md`:
    the initially captured guard and handler identities. The main-thread no-op reads neither.
 9. **Structured-clone constraints.** `TInput` / `TResult` / `workerData` must be
    structured-cloneable (no functions / Promises / `AbortSignal`). A non-cloneable result
-   cannot strand a dispatch: `serveWorker` replaces the failed success post with a clone-safe
+   cannot strand a job: `serveWorker` replaces the failed success post with a clone-safe
    failure envelope, and closes the parent port if even that fallback cannot be posted so the
-   main side observes exit. A matching-id malformed reply similarly rejects the dispatch,
+   main side observes exit. A matching-id malformed reply similarly rejects the job,
    terminates and evicts the tainted thread, and leaves id-less / foreign-id chatter ignored.
    Raw TypeScript is unflagged on Node 22.18+ and Node 23.6+; Node 22.12–22.17 and Node
    23.0–23.5 require `--experimental-strip-types`. A built `.js` / `.mjs` script is an
@@ -251,7 +250,7 @@ These invariants hold across `src/core` ↔ `worker.md`:
    that runs the handler and answers the protocol; it is self-contained and imports only
    `node:worker_threads` at runtime,
    so it loads as a raw module in a spawned thread. `createNodeWorker` returns the plain
-   `WorkerInterface`, so it inherits the Worker's `emitter` unchanged (clause 3).
+   `QueueInterface`, so it inherits the Worker's `emitter` unchanged (clause 3).
 10. **`createJSONQueueStore` is `@orkestrel/queue`'s `createDatabaseQueueStore` over a
     server JSON driver.** A queue's durable state is a `@orkestrel/database` table,
     so JSON persistence reuses the existing driver rather than a bespoke store — see
@@ -262,7 +261,7 @@ These invariants hold across `src/core` ↔ `worker.md`:
 `createNodeWorker` (`@orkestrel/worker/server`) runs jobs on a pool of `node:worker_threads` threads —
 true CPU parallelism for work that would otherwise block the event loop. It is a thin
 specialization of [`createWorker`](#surface): the pooled resource is a worker thread, and
-it returns the plain `WorkerInterface`, so its methods, lifecycle, concurrency, retries,
+it returns the plain `QueueInterface`, so its methods, lifecycle, concurrency, retries,
 timeout, and durability are exactly the Worker's (see [Methods](#methods)). The only
 additions are the thread pairing and the zero-`as` wire bridge.
 
@@ -326,7 +325,7 @@ structured-cloneable (no functions, Promises, or `AbortSignal`s cross the bounda
 name, and the thread reads it back from `node:worker_threads`.
 
 A thread worker takes the same `on` and `error` hooks as the core worker: pass `on` to wire
-initial `WorkerEventMap` listeners at construction, and `error` to receive a listener's throw
+initial `QueueEventMap` listeners at construction, and `error` to receive a listener's throw
 (see [Observing](#observing)).
 
 ## Persistence
@@ -374,9 +373,9 @@ worker.emitter.on('failure', (id, error) => log.warn(`job ${id} failed`, error))
 
 The events the worker's emitter carries:
 
-| Event map                 | Events                                                                                                                          |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `WorkerEventMap<TResult>` | `enqueue(id)` · `start(id)` · `retry(id, attempt)` · `success(id, result)` · `failure(id, error)` · `abort(reason)` · `drain()` |
+| Event map                | Events                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `QueueEventMap<TResult>` | `enqueue(id)` · `start(id)` · `retry(id, attempt)` · `success(id, result)` · `failure(id, error)` · `abort(reason)` · `drain()` |
 
 The worker forwards queue event payloads unchanged. In particular, `abort(reason)` carries
 the queue's coded `QueueError` with code `aborted`; its `cause` retains the caller-supplied
@@ -533,7 +532,7 @@ These tests pin the behaviour this guide documents:
 
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — the
   `## Surface` ↔ `src/core` / `src/server` bijection (value + type exports), the
-  `WorkerInterface` ↔ `Worker` method bijection, and the equality gate: every `Summary`
+  `## Methods` ↔ `Worker` method bijection, and the equality gate: every `Summary`
   cell against its declaration's description paragraph, the titled
   `A resource-backed worker` fence against the `@example` block of that title (pinned so
   the titled pair cannot be retired silently), and the README pitch against this guide's
@@ -566,9 +565,11 @@ These tests pin the behaviour this guide documents:
   promise identity across repeated and abort-event-reentrant calls, waits for serial queue
   then pool cleanup, destroys the worker emitter last, and preserves a sole pool failure;
   and durability passthrough — a `store` persists a job and `restore()` re-runs it against
-  a fresh resource (delegated to the queue), a no-op without a store.
+  a fresh resource (delegated to the queue), a no-op without a store; and the `Worker`
+  typed by `@orkestrel/queue`'s `QueueInterface`, its `emitter` and `on` hooks carrying
+  `QueueEventMap`.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) —
-  `createWorker` returns a working, typed instance end to end and honours its options +
+  `createWorker` returns a working `QueueInterface` end to end and honours its options +
   status surface.
 - [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) —
   `createJSONQueueStore` over a real temp file: entries persist across store instances on
@@ -576,10 +577,11 @@ These tests pin the behaviour this guide documents:
   the JSON round-trip, and a `remove` is reflected across a reopen; `createThread` resolving
   a live thread that clones its `workerData` across, spawning with that argument omitted, and
   rejecting a script that dies before `online`; plus a `createNodeWorker` round-trip smoke (a
-  job over a real thread, then teardown), the `on` hooks wired at construction with a
-  listener throw routed to `error`, and the option snapshot retained across jobs.
+  job over a real thread through the returned `QueueInterface`, then teardown), the `on`
+  hooks wired at construction with a listener throw routed to `error`, and the option
+  snapshot retained across jobs.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — the
-  main-side worker-thread machinery (`createThread` / `Dispatch`), driven
+  main-side worker-thread machinery (`createThread` / `Job`), driven
   through `createNodeWorker` over real worker threads (no mocking): a round-trip and a
   batch over a small pool; the concurrency cap and the live-thread cap + idle reuse; a
   throwing handler rejecting with its error, and re-running under `retries`; explicit enqueue

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import type { QueueInterface } from '@orkestrel/queue'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 import { createWorker } from '@src/core'
 import { createRecorder } from '@orkestrel/test'
 
@@ -13,6 +14,7 @@ describe('createWorker', () => {
 			pool: { create: () => 9 },
 			handler: (input, resource) => `${input}-${resource}`,
 		})
+		expectTypeOf(worker).toEqualTypeOf<QueueInterface<number, string>>()
 		try {
 			await expect(worker.enqueue(4)).resolves.toBe('4-9')
 		} finally {
