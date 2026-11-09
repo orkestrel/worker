@@ -84,22 +84,22 @@
 	},
 	"dependencies": {
 		"@orkestrel/contract": "^0.0.22",
-		"@orkestrel/database": "^0.0.21",
+		"@orkestrel/database": "^0.0.22",
 		"@orkestrel/emitter": "^0.0.15",
 		"@orkestrel/pool": "^0.0.20",
-		"@orkestrel/queue": "^0.0.20"
+		"@orkestrel/queue": "^0.0.21"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.60.1",
 		"@orkestrel/guide": "^0.0.30",
 		"@orkestrel/probe": "^0.0.29",
-		"@orkestrel/scaffold": "^0.0.125",
+		"@orkestrel/scaffold": "^0.0.126",
 		"@orkestrel/test": "^0.0.33",
 		"@types/node": "^26.6.6",
-		"oxfmt": "^0.77.0",
-		"oxlint": "^1.92.0",
+		"oxfmt": "^0.78.0",
+		"oxlint": "^1.93.0",
 		"typescript": "^7.0.2",
-		"vite": "^8.3.6",
+		"vite": "^8.3.7",
 		"vitest": "^5.1.0"
 	},
 	"engines": {
