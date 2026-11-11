@@ -18,7 +18,9 @@ store and a crash leaves exactly the unfinished rows. Pass a `store` to `createQ
 after a restart a fresh queue over the same store `restore()`s precisely that unfinished work.
 `DatabaseQueueStore` is the durable engine over the `@orkestrel/database` layer (a queue's
 durable state is a table), driver-pluggable across memory / JSON / SQLite; `MemoryQueueStore`
-is the zero-plumbing in-process default.
+is the zero-plumbing in-process default. The table admits each entry whole against the input
+shape, so through `DatabaseQueueStore` an `enqueue` input that carries an undeclared member
+rejects with a `QueueError` of code `store`, whose cause is the `DatabaseError` of code `VALIDATION` that carries the faults, before the handler runs.
 
 `Queue` is **observable**: it exposes a typed `emitter` (`.claude/rules/patterns.md` §
 Stateful emitters) carrying its lifecycle moments for fire-and-forget observers — logging,

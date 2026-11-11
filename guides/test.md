@@ -718,8 +718,10 @@ deliberate differences from 0.0.8. A class declared inside a grouping rule count
 because a class the cascade defines under a condition is still one the cascade defines; 0.0.8 read
 the top-level rules alone. Insertion order is breadth-first, so a top-level class lands before a
 class declared inside an earlier grouping rule; 0.0.8 popped a stack and inserted the deepest rule
-first. Iterate the set where the order is the subject and read `has` where membership is. A
-`@keyframes` rule's own children are outside the walk, so an animation's stops define no token here.
+first. Iterate the set where the order is the subject and read `has` where membership is. A class
+named only in an `@scope` prelude counts as defined, so `@scope (.panel) to (.footer)` defines
+`panel` and `footer`. A `@keyframes` rule's own children are outside the walk, so an animation's
+stops define no token here.
 
 Each rule's selector text is read by `collectSelectorClasses`, and that reading differs from 0.0.26,
 which matched a pattern over the text. An escaped name decodes, so `.sm\:flex` defines `sm:flex`
