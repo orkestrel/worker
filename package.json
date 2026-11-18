@@ -92,8 +92,8 @@
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.60.1",
 		"@orkestrel/guide": "^0.0.33",
-		"@orkestrel/probe": "^0.0.31",
-		"@orkestrel/scaffold": "^0.0.139",
+		"@orkestrel/probe": "^0.0.32",
+		"@orkestrel/scaffold": "^0.0.140",
 		"@orkestrel/test": "^0.0.44",
 		"@types/node": "^26.6.6",
 		"oxfmt": "^0.79.0",
