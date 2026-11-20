@@ -787,6 +787,10 @@ describe('root configuration', () => {
 		const setupProofs = globSync('tests/setup*.test.ts', { cwd: POLICY_ROOT })
 			.map((path) => path.replaceAll('\\', '/'))
 			.filter((path) => /^tests\/setup[^/]*\.test\.ts$/u.test(path))
+		// The isolation marker appends its guard to the two browser projects that serve the headers.
+		const isolation = existsSync(resolve(POLICY_ROOT, 'tests/setupIsolation.ts'))
+			? ['./tests/setupIsolation.ts']
+			: []
 		const expected = new Map<string, PolicyProject>([
 			// Each row is a project label, the path whose presence selects it, its include, and its setup.
 			...(
@@ -796,7 +800,7 @@ describe('root configuration', () => {
 						'src:browser',
 						'src/browser',
 						'tests/src/browser/**/*.test.ts',
-						['./tests/setup.ts', './tests/setupBrowser.ts'],
+						['./tests/setup.ts', './tests/setupBrowser.ts', ...isolation],
 					],
 					[
 						'src:server',
@@ -815,7 +819,7 @@ describe('root configuration', () => {
 						'app:browser',
 						'app/browser',
 						'tests/app/browser/**/*.test.ts',
-						['./tests/setup.ts', './tests/setupBrowser.ts'],
+						['./tests/setup.ts', './tests/setupBrowser.ts', ...isolation],
 					],
 					[
 						'app:server',
@@ -1231,7 +1235,11 @@ describe('root configuration', () => {
 	})] },
 }\n`,
 		)
-		const journeys: Array<{ readonly application: string; readonly tests: readonly object[] }> = []
+		const journeys: Array<{
+			readonly application: string
+			readonly tests: readonly object[]
+			readonly isolated: boolean
+		}> = []
 		// A face-only workspace declares no base application, so each declared application loads the
 		// journey wrapper under its own Vite mode, and the default mode stands for the base entry.
 		const occupied = [
@@ -1296,7 +1304,11 @@ describe('root configuration', () => {
 									throw new Error('A journey project carries no test block')
 								tests.push(test)
 							}
-							journeys.push({ application, tests })
+							journeys.push({
+								application,
+								tests,
+								isolated: existsSync(resolve(directory, 'tests/setupIsolation.ts')),
+							})
 						}
 						continue
 					}
@@ -1369,7 +1381,7 @@ describe('root configuration', () => {
 					expect(() => expect(control).toStrictEqual(expectedTypes)).toThrow('expected')
 				}
 			}
-			for (const { application, tests } of journeys) {
+			for (const { application, tests, isolated } of journeys) {
 				const names = tests.map((test) => {
 					expect(Object.getOwnPropertyDescriptor(test, 'include')?.value).toStrictEqual([
 						`tests/app/${application}/integration.test.ts`,
@@ -1378,6 +1390,7 @@ describe('root configuration', () => {
 					expect(Object.getOwnPropertyDescriptor(test, 'setupFiles')?.value).toStrictEqual([
 						'./tests/setup.ts',
 						'./tests/setupBrowser.ts',
+						...(isolated ? ['./tests/setupIsolation.ts'] : []),
 					])
 					const name: unknown = Object.getOwnPropertyDescriptor(test, 'name')?.value
 					const provide: unknown = Object.getOwnPropertyDescriptor(test, 'provide')?.value
